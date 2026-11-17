@@ -9,7 +9,7 @@ Gridlock & Grace: cozy isometric city-builder. Traffic puzzle first (v0.1), then
 - three.js 0.170, TypeScript strict, Vite. `npm run build` must pass before any push.
 - 1 unit = 1 m, Y up. Road tile 14 m, lane 3.4 m, curb 1. Vehicles face +X, buildings and people face +Z.
 - Warm Sunset palette only. `C` in `src/assets/core.ts` holds the in-game roles.
-- Camera: orthographic, angle π/4, tilt 0.62, rotation in 90° steps. No free camera.
+- Camera: orthographic, starts at angle π/4, tilt 0.62. Orbit is free (Keba asked for orbit controls, Nov 17): tilt clamped 0.32–1.35 rad; Q/E snap to 90° views.
 - Crowds and traffic are drawn with InstancedMesh (one batch per part). Never one Mesh per person or car in the game.
 - Textured, blinking or glowing parts get their own material; `mat()` is a shared cache.
 - `src/assets/models.ts` is ported as-is and has `@ts-nocheck`. New code goes in typed files.

@@ -1,6 +1,6 @@
-/* The 3D stage: renderer, warm lighting, and the angled toy-town camera.
-   Camera matches the Living Block Test: orthographic, 45° turn, 0.62 rad tilt,
-   drag to pan, scroll to zoom, Q / E to rotate in 90° steps. */
+/* The 3D stage: renderer, warm lighting, and the toy-town camera.
+   Orthographic, starting at a 45° turn and 0.62 rad tilt. Orbit freely (right-drag or Option-drag),
+   pan (middle-drag, Shift-drag, arrow keys), scroll to zoom, Q / E snap to the next 90° view. */
 import * as THREE from 'three';
 
 export interface Stage {
@@ -10,7 +10,14 @@ export interface Stage {
   sun: THREE.DirectionalLight;
   cam: CameraRig;
   render(): void;
+  /** Move the view by a screen-space drag (pixels). */
+  panBy(dx: number, dy: number): void;
+  /** Orbit around the target by a screen-space drag (pixels): sideways turns, up/down tilts. */
+  orbitBy(dx: number, dy: number): void;
 }
+
+/** How far the orbit can tilt: from a low, dramatic angle to almost straight down. */
+export const TILT_MIN = 0.32, TILT_MAX = 1.35;
 
 export interface CameraRig {
   target: THREE.Vector3;
@@ -66,26 +73,38 @@ export function createStage(host: HTMLElement): Stage {
     sun.target.updateMatrixWorld();
   };
 
-  // controls
+  // controls: right-drag or Option/Alt-drag orbits, middle-drag or Shift-drag pans, scroll zooms
   const el = renderer.domElement;
-  let drag: { x: number; y: number } | null = null;
-  el.addEventListener('pointerdown', (e) => { if (e.button === 2 || e.shiftKey || e.button === 1) drag = { x: e.clientX, y: e.clientY }; });
-  window.addEventListener('pointermove', (e) => {
-    if (!drag) return;
+  const panBy = (px: number, py: number) => {
     const k = (2 * cam.view) / cam.zoom / el.clientHeight;
-    const dx = (e.clientX - drag.x) * k, dy = (e.clientY - drag.y) * k / Math.sin(cam.tilt);
+    const dx = px * k, dy = (py * k) / Math.sin(cam.tilt);
     const ca = Math.cos(cam.angle), sa = Math.sin(cam.angle);
     cam.target.x -= dx * ca + dy * sa;
     cam.target.z -= -dx * sa + dy * ca;
-    drag = { x: e.clientX, y: e.clientY };
+  };
+  const orbitBy = (px: number, py: number) => {
+    cam.angle -= px * 0.008; cam.goalAngle = cam.angle;
+    cam.tilt = THREE.MathUtils.clamp(cam.tilt + py * 0.006, TILT_MIN, TILT_MAX);
+  };
+  let drag: { x: number; y: number; mode: 'pan' | 'orbit' } | null = null;
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button === 2 || (e.button === 0 && e.altKey)) drag = { x: e.clientX, y: e.clientY, mode: 'orbit' };
+    else if (e.button === 1 || (e.button === 0 && e.shiftKey)) drag = { x: e.clientX, y: e.clientY, mode: 'pan' };
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (drag.mode === 'orbit') orbitBy(dx, dy); else panBy(dx, dy);
+    drag.x = e.clientX; drag.y = e.clientY;
   });
   window.addEventListener('pointerup', () => (drag = null));
   el.addEventListener('contextmenu', (e) => e.preventDefault());
   el.addEventListener('wheel', (e) => { e.preventDefault(); cam.goalZoom = THREE.MathUtils.clamp(cam.goalZoom * Math.exp(-e.deltaY * 0.0012), 0.15, 9); }, { passive: false });
   const held = new Set<string>();
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'q' || e.key === 'Q') cam.goalAngle += Math.PI / 2;
-    if (e.key === 'e' || e.key === 'E') cam.goalAngle -= Math.PI / 2;
+    const snap = Math.round(cam.goalAngle / (Math.PI / 2)) * (Math.PI / 2);   // Q / E: turn to the next 90° view
+    if (e.key === 'q' || e.key === 'Q') cam.goalAngle = snap + Math.PI / 2;
+    if (e.key === 'e' || e.key === 'E') cam.goalAngle = snap - Math.PI / 2;
     held.add(e.key.toLowerCase());
   });
   window.addEventListener('keyup', (e) => held.delete(e.key.toLowerCase()));
@@ -106,7 +125,7 @@ export function createStage(host: HTMLElement): Stage {
 
   let last = performance.now();
   return {
-    renderer, scene, camera, sun, cam,
+    renderer, scene, camera, sun, cam, panBy, orbitBy,
     render() {
       const now = performance.now(), dt = Math.min(0.05, (now - last) / 1000); last = now;
       cam.zoom += (cam.goalZoom - cam.zoom) * Math.min(1, dt * 8);

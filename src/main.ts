@@ -31,7 +31,7 @@ roads.rebuild();
 cam.target.set(0, 0, 0); cam.zoom = cam.goalZoom = 1.15;
 
 /* ---------- drawing roads ---------- */
-type Tool = 'road' | 'erase' | 'move';
+type Tool = 'road' | 'erase' | 'move' | 'rotate';
 let tool: Tool = 'road';
 const ghostMat = new THREE.MeshBasicMaterial({ color: '#4E8FA6', transparent: true, opacity: 0.4, depthWrite: false });
 const ghost = new THREE.Mesh(new THREE.PlaneGeometry(T.tile - 0.6, T.tile - 0.6).rotateX(-Math.PI / 2), ghostMat);
@@ -70,22 +70,22 @@ function paintTo(to: [number, number]) {
   if (changed) { roads.rebuild(); city.roadsChanged(); }
 }
 const canvas = stage.renderer.domElement;
-// Move tool: one-finger / left-drag pans (for phones and trackpads)
-let panFrom: { x: number; y: number } | null = null;
+// Move and Rotate tools: one-finger / left-drag pans or orbits (for phones and trackpads)
+let toolDrag: { x: number; y: number } | null = null;
 canvas.addEventListener('pointerdown', (e) => {
-  if (tool === 'move' && e.button === 0) { panFrom = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); return; }
-  if (e.button !== 0 || e.shiftKey || city.stats.over) return;
+  if ((tool === 'move' || tool === 'rotate') && e.button === 0) { toolDrag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); return; }
+  if (e.button !== 0 || e.shiftKey || e.altKey || city.stats.over) return;
   const t = tileUnder(e); if (!t) return;
   canvas.setPointerCapture(e.pointerId); stroke = null; paintTo(t);
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (panFrom) {
-    const k = (2 * cam.view) / cam.zoom / canvas.clientHeight, dx = (e.clientX - panFrom.x) * k, dy = (e.clientY - panFrom.y) * k / Math.sin(cam.tilt);
-    const ca = Math.cos(cam.angle), sa = Math.sin(cam.angle);
-    cam.target.x -= dx * ca + dy * sa; cam.target.z -= -dx * sa + dy * ca; panFrom = { x: e.clientX, y: e.clientY }; return;
+  if (toolDrag) {
+    const dx = e.clientX - toolDrag.x, dy = e.clientY - toolDrag.y;
+    if (tool === 'rotate') stage.orbitBy(dx, dy); else stage.panBy(dx, dy);
+    toolDrag = { x: e.clientX, y: e.clientY }; return;
   }
   const t = tileUnder(e);
-  if (tool === 'move') { ghost.visible = false; return; }
+  if (tool === 'move' || tool === 'rotate') { ghost.visible = false; return; }
   ghost.visible = !!t && !city.stats.over;
   if (!t) return;
   const { x, z } = grid.center(...t); ghost.position.x = x; ghost.position.z = z;
@@ -93,12 +93,12 @@ canvas.addEventListener('pointermove', (e) => {
   ghostMat.color.set(tool === 'erase' ? '#C8553D' : ok ? '#4E8FA6' : '#C8553D'); ghostMat.opacity = ok ? 0.42 : 0.22;
   if (stroke && (e.buttons & 1)) paintTo(t);
 });
-const endStroke = () => { stroke = null; panFrom = null; };
+const endStroke = () => { stroke = null; toolDrag = null; };
 canvas.addEventListener('pointerup', endStroke); canvas.addEventListener('pointercancel', endStroke);
 canvas.addEventListener('pointerleave', () => (ghost.visible = false));
 
-function setTool(t: Tool) { tool = t; $('toolRoad').classList.toggle('on', t === 'road'); $('toolErase').classList.toggle('on', t === 'erase'); $('toolMove').classList.toggle('on', t === 'move'); }
-$('toolRoad').onclick = () => setTool('road'); $('toolErase').onclick = () => setTool('erase'); $('toolMove').onclick = () => setTool('move');
+function setTool(t: Tool) { tool = t; $('toolRoad').classList.toggle('on', t === 'road'); $('toolErase').classList.toggle('on', t === 'erase'); $('toolMove').classList.toggle('on', t === 'move'); $('toolRotate').classList.toggle('on', t === 'rotate'); }
+$('toolRoad').onclick = () => setTool('road'); $('toolErase').onclick = () => setTool('erase'); $('toolMove').onclick = () => setTool('move'); $('toolRotate').onclick = () => setTool('rotate');
 $('zoomIn').onclick = () => (cam.goalZoom = Math.min(9, cam.goalZoom * 1.35)); $('zoomOut').onclick = () => (cam.goalZoom = Math.max(0.15, cam.goalZoom / 1.35));
 
 /* ---------- speed ---------- */
@@ -109,6 +109,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') setTool('road');
   if (e.key === 'x' || e.key === 'X') setTool('erase');
   if (e.key === 'm' || e.key === 'M') setTool('move');
+  if (e.key === 'o' || e.key === 'O') setTool('rotate');
   if (e.key === ' ') { e.preventDefault(); setSpeed(speed === 0 ? 1 : 0); }
   if (e.key === '1') setSpeed(1); if (e.key === '2') setSpeed(2); if (e.key === '4') setSpeed(4);
 });

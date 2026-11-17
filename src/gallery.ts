@@ -6,6 +6,7 @@ import { createStage } from './engine/stage';
 import { runTicks } from './engine/tick';
 import { C, rbox, shadowAll } from './assets/core';
 import * as M from './assets/models';
+import * as H from './assets/highway';
 
 const stage = createStage(document.getElementById('app')!);
 const { scene, camera, cam } = stage;
@@ -33,6 +34,10 @@ const rows: [string, Entry[]][] = [
   ['Buildings', [
     ['Hook & Haul', () => M.makeHookAndHaulTowShop(), 1.4], ['Duplex', () => M.makeDuplexApartments()], ['Heritage Corner', () => M.makeHeritageApartments()],
     ['Garden Walkup', () => M.makeGardenApartments()], ['Tower', () => M.makeTowerApartments()],
+  ]],
+  ['Highway kit (code)', [
+    ['Straight (bridge in code)', () => H.makeHighwayStraight()], ['Ramp', () => H.makeHighwayRamp()], ['Curve', () => H.makeHighwayCurve()],
+    ['T-junction', () => H.makeHighwayT()], ['Tall pillar (level 2)', () => H.makeTallPillar()], ['Level 2 over level 1', () => H.makeStackedCrossing()],
   ]],
   ['River', [['Straight bank', () => M.makeRiverBank()], ['Bend', () => M.makeRiverBend()], ['End', () => M.makeRiverEnd()]]],
 ];
@@ -63,7 +68,7 @@ for (const [title, entries] of rows) {
 }
 
 // the Meshy pieces, loaded from public/models
-const glbs = ['house', 'school', 'factory', 'police_station', 'fire_station', 'cityhall', 'stadium'];
+const glbs = ['bridge_straight_v02', 'house', 'school', 'factory', 'police_station', 'fire_station', 'cityhall', 'stadium'];
 const loader = new GLTFLoader();
 let gx = 0;
 for (const name of glbs) {
