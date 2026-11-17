@@ -158,12 +158,15 @@ canvas.addEventListener('pointermove', (e) => {
   const t = tileUnder(e);
   ghost.visible = !!t && !city.stats.over;
   if (!t) { hintAt(null, ''); return; }
-  if (tool === 'move' || tool === 'rotate') { ghost.visible = false; return; }
+  if (tool === 'rotate') { ghost.visible = false; return; }
+  if (tool === 'move') { ghost.visible = false; hintAt(e, city.homeInfo(...t)); return; }
   const { x, z } = grid.center(...t); ghost.position.x = x; ghost.position.z = z;
   const c = grid.idx(...t);
   const ok = tool === 'road' ? canPlace(...t) : tool === 'avenue' ? (grid.road[c] === 1 && city.stats.roadTiles >= T.avenueCost - 1) || (grid.isFree(...t) && city.stats.roadTiles >= T.avenueCost) : tool === 'place' ? grid.isFree(...t) && city.hand.length > 0
     : tool === 'turn' ? !!grid.building[c] : tool === 'junction' ? grid.isCrossing(c) : !!grid.building[c] || grid.isRoad(...t);
   ghostMat.color.set(tool === 'erase' ? '#C8553D' : ok ? (tool === 'place' ? pieceColor() : '#4E8FA6') : '#C8553D'); ghostMat.opacity = ok ? 0.42 : 0.22;
+  const info = (tool === 'turn' || tool === 'erase' || tool === 'place') ? city.homeInfo(...t) : '';
+  if (info && !(tool === 'place' && ok)) { hintAt(e, info); return; }
   hintAt(e, tool === 'road' && ok && grid.water[c] ? `Bridge · uses 1 of your ${city.stats.bridges} bridge pieces · crosses east-west` : tool === 'avenue' && ok ? (grid.road[c] === 1 ? `Upgrade to avenue · ${T.avenueCost - 1} road tile` : `Avenue · ${T.avenueCost} road tiles`) : tool === 'place' && ok ? placeHint(...t) : tool === 'junction' && ok ? `Next: ${J_INFO[nextJunction(grid.junction[c])].name} · ${J_INFO[nextJunction(grid.junction[c])].note}` : '');
   if (stroke && (e.buttons & 1)) paintTo(t);
 });
@@ -240,7 +243,7 @@ function hud() {
   $('mode').textContent = s.sandbox ? 'Sandbox' : '';
   const gl = city.goalText(); $('goalText').textContent = gl.text; $('goalProg').textContent = gl.progress; ($('goalBar') as HTMLElement).style.width = `${gl.frac * 100}%`;
   const tk = city.tokens; $('tokens').textContent = [`${s.bridges} bridge piece${s.bridges === 1 ? '' : 's'}`,tk.lights ? `${tk.lights} free light${tk.lights > 1 ? 's' : ''}` : '', tk.round ? `${tk.round} free roundabout${tk.round > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
-  $('homes').textContent = `${s.homes} homes · ${s.shops} shops · ${traffic.cars.length} cars · room for ${s.demand} more`;
+  $('homes').textContent = `${s.homes} homes (${city.households()} households) · ${s.shops} shops · ${traffic.cars.length} cars · room for ${s.demand} more`;
   drawHand();
 }
 function gameOver() {

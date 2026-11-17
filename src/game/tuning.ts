@@ -37,8 +37,13 @@ export const T = {
   shopVisit: 10,
 
   /** City growth: homes arrive in the hand while the shops have room for them. */
-  homesFirstShop: 6,
-  homesPerShop: 5,
+  /** Households the shops can support (a cottage is 1 household, a tower is 6). */
+  homesFirstShop: 8,
+  homesPerShop: 8,
+  /** Growth: a home levels up after this many on-time trips at each level (late trips set it back 2),
+      if the shops have room for the extra households. Levels: cottage, duplex, garden walkup, heritage corner, tower. */
+  growAt: [5, 8, 12, 16],
+  households: [1, 2, 3, 4, 6],
   /** Game minutes between new homes being dealt (while there's demand). */
   growEvery: 35,
   /** Game minutes between new shops being dealt. */

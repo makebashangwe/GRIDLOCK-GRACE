@@ -21,6 +21,31 @@ const tryDispatchNow = (t: number) => t <= 0;
 const stocked = (t: ShopType) => t !== 'tow' && t !== 'depot';
 /** Service buildings: no customers, no home demand. */
 const service = (t: ShopType) => t === 'tow' || t === 'depot';
+/** Walls for apartment levels, so a grown street keeps some variety. */
+const APT_WALLS = ['#F6E7CF', '#D99A8B', '#F2CC8F', '#A9CFDA', '#E9D8B8', '#81B29A'];
+/** The model for a home at each level, scaled to fit inside one 14 m tile. Fronts face +Z. */
+function homeModel(level: number, wall: string, roof: string): THREE.Object3D {
+  const k = APT_WALLS[(wall.charCodeAt(3) + roof.charCodeAt(4)) % APT_WALLS.length];
+  const make: (() => THREE.Object3D)[] = [
+    () => building({ w: 8, d: 7, h: 5.4, wall, roof }),
+    () => M.makeDuplexApartments() as THREE.Object3D,
+    () => (M.makeGardenApartments as unknown as (w: string) => THREE.Object3D)(k),
+    () => (M.makeHeritageApartments as unknown as (w: string) => THREE.Object3D)(k === '#F6E7CF' ? '#D99A8B' : k),
+    () => (M.makeTowerApartments as unknown as (w: string) => THREE.Object3D)(k),
+  ];
+  const inner = make[level](), box = new THREE.Box3().setFromObject(inner), size = box.getSize(new THREE.Vector3());
+  const fit = Math.min(1, 12 / Math.max(size.x, size.z));
+  inner.scale.multiplyScalar(fit);
+  const c = box.getCenter(new THREE.Vector3()).multiplyScalar(fit);
+  inner.position.set(-c.x, -box.min.y * fit, -c.z);
+  const g = new THREE.Group(); g.add(inner); return shadowAll(g);
+}
+/** The trip a home's pin shows: the one with the least time left. */
+function pinTrip(h: Home): Trip | null {
+  let best: Trip | null = null;
+  for (const t of h.trips) if ((t.state === 'waiting' || t.state === 'out') && (!best || t.deadline < best.deadline)) best = t;
+  return best;
+}
 const FACE_ROT = [Math.PI / 2, 0, -Math.PI / 2, Math.PI];
 
 interface Building extends Placed {
@@ -33,7 +58,17 @@ interface Building extends Placed {
   turned: boolean;
   pin: HTMLDivElement;
 }
-export interface Home extends Building { kind: 'home'; wants: ShopType; nextTrip: number; trip: Trip | null }
+export interface Home extends Building {
+  kind: 'home'; wants: ShopType; nextTrip: number;
+  /** Trips under way (a bigger building has more households, so more trips at once). */
+  trips: Trip[];
+  /** 0 cottage, 1 duplex, 2 garden walkup, 3 heritage corner, 4 tower. */
+  level: number;
+  /** On-time trips toward the next level. */
+  happy: number;
+  wall: string; roof: string;
+}
+export const LEVEL_NAMES = ['Cottage', 'Duplex', 'Garden Walkup', 'Heritage Corner', 'Tower'];
 /** A piece waiting in the player's hand. */
 export type Piece = { kind: 'home'; wants: ShopType } | { kind: 'shop'; type: ShopType };
 export interface Shop extends Building { kind: 'shop'; type: ShopType; served: number; stock: number; truck: Car | null; warned: boolean }
@@ -122,8 +157,8 @@ export class City {
     const g = this.grid, c = g.idx(i, j); if (!g.isFree(i, j)) return null;
     this.clearTree(c);
     const [wall, roof] = HOUSE_COLORS[this.nextId % HOUSE_COLORS.length];
-    const obj = shadowAll(building({ w: 8, d: 7, h: 5.4, wall, roof }));
-    const home: Home = { id: this.nextId++, kind: 'home', wants, i, j, obj, face: this.roadSide(i, j), access: -1, turned: false, pin: this.pin('pin'), nextTrip: this.clock + 15 + Math.random() * 40, trip: null };
+    const obj = homeModel(0, wall, roof);
+    const home: Home = { id: this.nextId++, kind: 'home', wants, i, j, obj, face: this.roadSide(i, j), access: -1, turned: false, pin: this.pin('pin'), nextTrip: this.clock + 15 + Math.random() * 40, trips: [], level: 0, happy: 0, wall, roof };
     g.building[c] = home; this.homes.push(home);
     this.scene.add(obj); this.connect(home); this.popIn(obj); this.count(); this.onChange();
     return home;
@@ -159,11 +194,11 @@ export class City {
     this.scene.remove(b.obj); b.pin.remove(); g.building[c] = null;
     if (b.kind === 'home') {
       this.homes.splice(this.homes.indexOf(b), 1);
-      if (b.trip?.car) { this.traffic.remove(b.trip.car); this.carTrip.delete(b.trip.car); }
+      for (const t of b.trips) if (t.car) { this.traffic.remove(t.car); this.carTrip.delete(t.car); }
     } else {
       this.shops.splice(this.shops.indexOf(b), 1);
-      for (const h of this.homes) {   // anyone heading there turns around and picks again
-        const t = h.trip; if (!t || t.shop !== b) continue;
+      for (const h of this.homes) for (const t of [...h.trips]) {   // anyone heading there turns around and picks again
+        if (t.shop !== b) continue;
         if (t.car) { this.traffic.remove(t.car); this.carTrip.delete(t.car); t.car = null; }
         if (t.state === 'out') t.state = 'waiting'; else this.finish(t);
       }
@@ -222,10 +257,40 @@ export class City {
   /** How many homes the shops can support. */
   private capacity(): number { const n = this.shops.filter((s) => !service(s.type)).length; return n ? T.homesFirstShop + (n - 1) * T.homesPerShop : 0; }
 
+  /** Hover text for a home: its level and how close it is to growing. */
+  homeInfo(i: number, j: number): string {
+    const b = this.grid.building[this.grid.idx(i, j)] as AnyBuilding | null;
+    if (!b || b.kind !== 'home') return '';
+    const n = T.households[b.level], fam = `${n} household${n > 1 ? 's' : ''}`;
+    if (b.level >= 4) return `${LEVEL_NAMES[b.level]} · ${fam} · fully grown`;
+    return `${LEVEL_NAMES[b.level]} · ${fam} · ${b.happy}/${T.growAt[b.level]} on-time trips to become a ${LEVEL_NAMES[b.level + 1]}`;
+  }
+
+  households(): number { let n = 0; for (const h of this.homes) n += T.households[h.level]; return n; }
+
+  /** A home that's been doing well grows into the next building, if the shops have room for more households. */
+  private grow(): void {
+    for (const h of this.homes) {
+      if (h.level >= 4 || h.happy < T.growAt[h.level]) continue;
+      const extra = T.households[h.level + 1] - T.households[h.level];
+      if (this.capacity() - this.households() < extra) continue;
+      this.setLevel(h, h.level + 1);
+      this.onEvent(`A home grew into a ${LEVEL_NAMES[h.level]}`, 'good');
+      return;   // one at a time
+    }
+  }
+
+  setLevel(h: Home, level: number, instant = false): void {
+    this.scene.remove(h.obj);
+    h.level = level; h.happy = 0; h.obj = homeModel(level, h.wall, h.roof);
+    this.scene.add(h.obj); this.connect(h); h.obj.rotation.y = FACE_ROT[h.face];
+    if (!instant) this.popIn(h.obj);
+  }
+
   /** Deal a new home into the hand when the shops have room for more people. */
   private deal(): void {
     const inHand = this.hand.filter((p) => p.kind === 'home').length;
-    this.stats.demand = Math.max(0, this.capacity() - this.homes.length - inHand);
+    this.stats.demand = Math.max(0, this.capacity() - this.households() - inHand);
     if (this.stats.demand <= 0 || this.hand.length >= T.handMax) return;
     const types = [...new Set(this.shops.map((s) => s.type))].filter((t) => !service(t));
     if (!types.length) return;
@@ -268,18 +333,19 @@ export class City {
     }
     if (shop) shop.stock = Math.max(0, shop.stock - T.stockPerTrip);
     if (!trip.failed) {
-      this.stats.arrived++; this.week.arrived++; if (trip.shop) trip.shop.served++;
+      this.stats.arrived++; this.week.arrived++; if (trip.shop) trip.shop.served++; trip.home.happy++;
       if (this.stats.arrived % T.tripsPerTile === 0) { this.stats.roadTiles++; this.stats.earned++; this.onEarn(); }
     }
   }
 
   private finish(trip: Trip): void {
     if (trip.car) this.carTrip.delete(trip.car);
-    const h = trip.home; h.trip = null; h.nextTrip = this.clock + T.tripCooldown;
+    const h = trip.home, k = h.trips.indexOf(trip); if (k >= 0) h.trips.splice(k, 1);
+    h.nextTrip = Math.max(h.nextTrip, this.clock + T.tripCooldown / T.households[h.level]);
   }
 
   private fail(trip: Trip, why?: string): void {
-    trip.failed = true; this.stats.failed++; this.week.failed++;
+    trip.failed = true; this.stats.failed++; this.week.failed++; trip.home.happy = Math.max(0, trip.home.happy - 2);
     this.onEvent(why ?? `A trip to ${SHOP_INFO[trip.type].name} missed its deadline`, 'bad');
     if (!this.stats.sandbox && this.stats.failed >= T.failLimit) { this.stats.over = true; this.onEvent('Gridlock! The city ran out of patience.', 'bad'); }
   }
@@ -469,13 +535,13 @@ export class City {
     this.stats.day = day + 1; this.stats.minute = this.clock % 1440; this.stats.weekday = day % 7;
     const rate = T.baseTripRate * this.rhythm();
 
-    if (this.clock >= this.nextGrow) { this.nextGrow = this.clock + T.growEvery; this.deal(); }
+    if (this.clock >= this.nextGrow) { this.nextGrow = this.clock + T.growEvery; this.grow(); this.deal(); }
     if (this.clock >= this.nextShop) {
       this.nextShop = this.clock + T.newShopEvery;
       const type = SHOP_ORDER[this.shopsDealt++ % SHOP_ORDER.length];
       this.hand.push({ kind: 'shop', type }); this.onEvent(`New shop to place: ${SHOP_INFO[type].name}`, 'good');
     }
-    this.stats.demand = Math.max(0, this.capacity() - this.homes.length - this.hand.filter((p) => p.kind === 'home').length);
+    this.stats.demand = Math.max(0, this.capacity() - this.households() - this.hand.filter((p) => p.kind === 'home').length);
 
     const types = [...new Set(this.shops.map((s) => s.type))].filter((t) => !service(t));
     this.dispatchT -= realDt;
@@ -483,19 +549,22 @@ export class City {
     if (tryDispatchNow(this.dispatchT)) { this.updateDeliveries(); this.updatePotholes(); }
     const tryDispatch = this.dispatchT <= 0; if (tryDispatch) this.dispatchT = 0.4;
     for (const h of this.homes) {
-      if (!h.trip && this.clock >= h.nextTrip && types.length && Math.random() < gm * rate) {
+      const size = T.households[h.level];
+      if (h.trips.length < size && this.clock >= h.nextTrip && types.length && Math.random() < gm * rate * size) {
         const type: ShopType = (types as ShopType[]).includes(h.wants) && Math.random() < T.wantShare ? h.wants : types[Math.floor(Math.random() * types.length)];
-        h.trip = { home: h, type, deadline: this.clock + T.tripDeadline + this.patience, state: 'waiting', failed: false };
+        h.trips.push({ home: h, type, deadline: this.clock + T.tripDeadline + this.patience, state: 'waiting', failed: false });
+        h.nextTrip = this.clock + 4;
       }
-      const trip = h.trip; if (!trip) continue;
-      if (trip.state === 'waiting' && tryDispatch) this.dispatch(trip);
-      if (!trip.failed && (trip.state === 'waiting' || trip.state === 'out') && this.clock > trip.deadline) {
-        this.fail(trip);
-        if (trip.state === 'waiting') this.finish(trip);   // gave up
-      }
-      if (trip.state === 'shop' && this.clock >= trip.until!) {
-        trip.state = 'back';
-        if (!trip.shop || !this.send(trip, trip.shop, h, () => this.finish(trip))) this.finish(trip);   // no way home: they get a ride
+      for (const trip of [...h.trips]) {
+        if (trip.state === 'waiting' && tryDispatch) this.dispatch(trip);
+        if (!trip.failed && (trip.state === 'waiting' || trip.state === 'out') && this.clock > trip.deadline) {
+          this.fail(trip);
+          if (trip.state === 'waiting') this.finish(trip);   // gave up
+        }
+        if (trip.state === 'shop' && this.clock >= trip.until!) {
+          trip.state = 'back';
+          if (!trip.shop || !this.send(trip, trip.shop, h, () => this.finish(trip))) this.finish(trip);   // no way home: they get a ride
+        }
       }
     }
   }
@@ -522,7 +591,7 @@ export class City {
     const v = new THREE.Vector3();
     const put = (b: AnyBuilding, y: number) => {
       // a trip's timer rides on its car while it's driving, so you can follow it through traffic
-      const car = b.kind === 'home' && b.trip?.state === 'out' ? b.trip.car : null;
+      const t = b.kind === 'home' ? pinTrip(b) : null, car = t?.state === 'out' ? t.car : null;
       const { x, z } = car ? { x: car.x, z: car.z } : this.grid.center(b.i, b.j);
       v.set(x, car ? 8 : y, z).project(camera);
       b.pin.classList.toggle('riding', !!car);
@@ -530,7 +599,7 @@ export class City {
       return Math.abs(v.x) < 1.1 && Math.abs(v.y) < 1.1;
     };
     for (const h of this.homes) {
-      const t = h.trip, blocked = h.access < 0, show = (blocked || (!!t && (t.state === 'waiting' || t.state === 'out'))) && put(h, 12);
+      const t = pinTrip(h), blocked = h.access < 0, show = (blocked || (!!t && (t.state === 'waiting' || t.state === 'out'))) && put(h, 12);
       h.pin.style.display = show ? 'block' : 'none';
       if (!show) continue;
       const left = t ? Math.max(0, (t.deadline - this.clock) / (T.tripDeadline + this.patience)) : 1;
@@ -564,7 +633,7 @@ export class City {
       v: 1, clock: this.clock, nextGrow: this.nextGrow, nextShop: this.nextShop, shopsDealt: this.shopsDealt,
       stats: { ...this.stats }, hand: [...this.hand], roads, potholes: roads.filter((c) => g.pothole[c]), water: [...g.water.keys()].filter((c) => g.water[c]), avenues: roads.filter((c) => g.road[c] === 2), goal: this.goal, week: this.week, tokens: this.tokens, patience: this.patience,
       junctions: roads.filter((c) => g.junction[c]).map((c) => [c, g.junction[c], g.jspent[c]] as [number, number, number]),
-      buildings: [...this.homes, ...this.shops].map((b) => ({ kind: b.kind, i: b.i, j: b.j, face: b.face, turned: b.turned, wants: b.kind === 'home' ? b.wants : undefined, type: b.kind === 'shop' ? b.type : undefined, stock: b.kind === 'shop' ? b.stock : undefined })),
+      buildings: [...this.homes, ...this.shops].map((b) => ({ kind: b.kind, i: b.i, j: b.j, face: b.face, turned: b.turned, wants: b.kind === 'home' ? b.wants : undefined, level: b.kind === 'home' ? b.level : undefined, happy: b.kind === 'home' ? b.happy : undefined, type: b.kind === 'shop' ? b.type : undefined, stock: b.kind === 'shop' ? b.stock : undefined })),
     };
   }
 
@@ -581,6 +650,8 @@ export class City {
       if (!made) continue;
       made.face = b.face; made.turned = b.turned; this.connect(made);
       if (made.kind === 'shop' && b.stock !== undefined) made.stock = b.stock;
+      if (made.kind === 'home' && b.level) { this.setLevel(made, b.level, true); }
+      if (made.kind === 'home') made.happy = b.happy ?? 0;
       made.obj.rotation.y = FACE_ROT[made.face]; delete (made.obj.userData as { grow?: number }).grow; made.obj.scale.setScalar(1);
     }
     this.clock = d.clock; this.nextGrow = d.nextGrow; this.nextShop = d.nextShop; this.shopsDealt = d.shopsDealt;
@@ -596,5 +667,5 @@ export interface SaveData {
   stats: Stats; hand: Piece[]; roads: number[]; avenues?: number[]; water?: number[]; potholes?: number[];
   junctions?: [number, number, number?][];
   goal?: Goal; week?: { arrived: number; failed: number; crashes: number }; tokens?: { lights: number; round: number }; patience?: number;
-  buildings: { kind: 'home' | 'shop'; i: number; j: number; face: number; turned: boolean; wants?: ShopType; type?: ShopType; stock?: number }[];
+  buildings: { kind: 'home' | 'shop'; i: number; j: number; face: number; turned: boolean; wants?: ShopType; type?: ShopType; stock?: number; level?: number; happy?: number }[];
 }
