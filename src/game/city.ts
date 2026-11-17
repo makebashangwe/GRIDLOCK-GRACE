@@ -35,12 +35,12 @@ export interface Shop extends Building { kind: 'shop'; type: ShopType; served: n
 type AnyBuilding = Home | Shop;
 interface Trip { home: Home; type: ShopType; deadline: number; state: 'waiting' | 'out' | 'shop' | 'back'; failed: boolean; shop?: Shop; car?: Car | null; until?: number }
 
-export interface Stats { earned: number; arrived: number; failed: number; homes: number; shops: number; demand: number; roadTiles: number; day: number; minute: number; over: boolean }
+export interface Stats { sandbox: boolean; earned: number; arrived: number; failed: number; homes: number; shops: number; demand: number; roadTiles: number; day: number; minute: number; over: boolean }
 
 export class City {
   homes: Home[] = [];
   shops: Shop[] = [];
-  stats: Stats = { earned: 0, arrived: 0, failed: 0, homes: 0, shops: 0, demand: 0, roadTiles: T.startRoadTiles, day: 1, minute: T.startMinute, over: false };
+  stats: Stats = { sandbox: false, earned: 0, arrived: 0, failed: 0, homes: 0, shops: 0, demand: 0, roadTiles: T.startRoadTiles, day: 1, minute: T.startMinute, over: false };
   clock = T.startMinute;   // game minutes since day 1 midnight
   /** The hand: the next piece to place is hand[0]. Starts with a grocery and three homes that want it. */
   hand: Piece[] = [{ kind: 'shop', type: 'grocery' }, { kind: 'home', wants: 'grocery' }, { kind: 'home', wants: 'grocery' }, { kind: 'home', wants: 'grocery' }];
@@ -238,7 +238,7 @@ export class City {
   private fail(trip: Trip): void {
     trip.failed = true; this.stats.failed++;
     this.onEvent(`A trip to ${SHOP_INFO[trip.type].name} missed its deadline`, 'bad');
-    if (this.stats.failed >= T.failLimit) { this.stats.over = true; this.onEvent('Gridlock! The city ran out of patience.', 'bad'); }
+    if (!this.stats.sandbox && this.stats.failed >= T.failLimit) { this.stats.over = true; this.onEvent('Gridlock! The city ran out of patience.', 'bad'); }
   }
 
   /** Advance the city by `gm` game minutes. */
@@ -319,4 +319,38 @@ export class City {
       s.pin.style.display = 'block'; s.pin.classList.toggle('stuck', s.access < 0);
     }
   }
+
+  /* ---------------- saving ---------------- */
+  /** Everything needed to rebuild this town later. Cars on the road aren't saved: trips simply start fresh. */
+  save(): SaveData {
+    const g = this.grid, roads: number[] = [];
+    for (let c = 0; c < g.road.length; c++) if (g.road[c]) roads.push(c);
+    return {
+      v: 1, clock: this.clock, nextGrow: this.nextGrow, nextShop: this.nextShop, shopsDealt: this.shopsDealt,
+      stats: { ...this.stats }, hand: [...this.hand], roads,
+      buildings: [...this.homes, ...this.shops].map((b) => ({ kind: b.kind, i: b.i, j: b.j, face: b.face, turned: b.turned, wants: b.kind === 'home' ? b.wants : undefined, type: b.kind === 'shop' ? b.type : undefined })),
+    };
+  }
+
+  load(d: SaveData): void {
+    const g = this.grid;
+    for (const c of d.roads) { g.road[c] = 1; this.clearTree(c); }
+    for (const b of d.buildings) {
+      const made = b.kind === 'home' ? this.addHome(b.i, b.j, b.wants ?? 'grocery') : this.addShop(b.type ?? 'grocery', b.i, b.j);
+      if (!made) continue;
+      made.face = b.face; made.turned = b.turned; this.connect(made);
+      made.obj.rotation.y = FACE_ROT[made.face]; delete (made.obj.userData as { grow?: number }).grow; made.obj.scale.setScalar(1);
+    }
+    this.clock = d.clock; this.nextGrow = d.nextGrow; this.nextShop = d.nextShop; this.shopsDealt = d.shopsDealt;
+    this.hand = d.hand; this.stats = { ...this.stats, ...d.stats, over: false };
+    for (const h of this.homes) h.nextTrip = this.clock + Math.random() * 30;
+    this.count(); this.onChange();
+  }
+}
+
+export interface SaveData {
+  v: 1;
+  clock: number; nextGrow: number; nextShop: number; shopsDealt: number;
+  stats: Stats; hand: Piece[]; roads: number[];
+  buildings: { kind: 'home' | 'shop'; i: number; j: number; face: number; turned: boolean; wants?: ShopType; type?: ShopType }[];
 }

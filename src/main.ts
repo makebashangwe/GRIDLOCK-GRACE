@@ -7,7 +7,7 @@ import { C } from './assets/core';
 import { Grid } from './game/grid';
 import { RoadView } from './game/roadView';
 import { Traffic } from './game/traffic';
-import { City } from './game/city';
+import { City, type SaveData } from './game/city';
 import { T, SHOP_INFO, SHOP_ORDER } from './game/tuning';
 
 const stage = createStage(document.getElementById('app')!);
@@ -27,6 +27,13 @@ const gm = gridLines.material as THREE.Material; gm.transparent = true; gm.opaci
 const roads = new RoadView(scene, grid);
 const traffic = new Traffic(scene, grid);
 const city = new City(scene, grid, traffic, $('pins'));
+/* ---------- saving: the town autosaves and comes back when you return ---------- */
+const SAVE_KEY = 'gridlock-grace-town-v1';
+try { const raw = localStorage.getItem(SAVE_KEY); if (raw) city.load(JSON.parse(raw) as SaveData); } catch { /* a broken save just means a fresh town */ }
+const saveNow = () => { try { if (!city.stats.over) localStorage.setItem(SAVE_KEY, JSON.stringify(city.save())); } catch { /* storage full or blocked */ } };
+setInterval(saveNow, 5000);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
+window.addEventListener('pagehide', saveNow);
 roads.rebuild();
 cam.target.set(0, 0, 0); cam.zoom = cam.goalZoom = 1.15;
 
@@ -170,17 +177,22 @@ function hud() {
   $('day').textContent = `Day ${s.day} · ${clock(s.minute)}`;
   $('tiles').textContent = String(s.roadTiles);
   $('arrived').textContent = String(s.arrived);
-  $('failed').textContent = `${s.failed} / ${T.failLimit}`;
-  ($('failbar') as HTMLElement).style.width = `${(s.failed / T.failLimit) * 100}%`;
+  $('failed').textContent = s.sandbox ? String(s.failed) : `${s.failed} / ${T.failLimit}`;
+  ($('failbar') as HTMLElement).style.width = s.sandbox ? '0%' : `${(s.failed / T.failLimit) * 100}%`;
+  $('mode').textContent = s.sandbox ? 'Sandbox' : '';
   $('homes').textContent = `${s.homes} homes · ${s.shops} shops · ${traffic.cars.length} cars · room for ${s.demand} more`;
   drawHand();
 }
 function gameOver() {
   const s = city.stats;
-  $('overStats').textContent = `You kept the city moving for ${s.day - 1} day${s.day === 2 ? '' : 's'} and ${clock(s.minute)}. ${s.arrived} trips arrived on time, with ${s.homes} homes and ${s.shops} shops.`;
+  const n = (k: number, word: string) => `${k} ${word}${k === 1 ? '' : 's'}`;
+  $('overStats').textContent = `Too many trips ran late. Your town reached Day ${s.day}, ${clock(s.minute)}, with ${n(s.homes, 'home')} and ${n(s.shops, 'shop')}; ${n(s.arrived, 'trip')} arrived on time.`;
   $('over').classList.add('show');
 }
-$('again').onclick = () => location.reload();
+$('again').onclick = () => { try { localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ } location.reload(); };
+// keep building: the town carries on in Sandbox (no failed-trip limit)
+$('keep').onclick = () => { city.stats.over = false; city.stats.sandbox = true; $('over').classList.remove('show'); saveNow(); toast('Sandbox: keep building, no fail limit', 'good'); };
+$('newTown').onclick = () => { if (confirm('Start a new town? This one will be cleared.')) { try { localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ } location.reload(); } };
 
 /* ---------- loop ---------- */
 let last = performance.now(), paintT = 0, hudT = 0;
