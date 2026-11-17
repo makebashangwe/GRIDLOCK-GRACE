@@ -82,10 +82,26 @@ export function createStage(host: HTMLElement): Stage {
   window.addEventListener('pointerup', () => (drag = null));
   el.addEventListener('contextmenu', (e) => e.preventDefault());
   el.addEventListener('wheel', (e) => { e.preventDefault(); cam.goalZoom = THREE.MathUtils.clamp(cam.goalZoom * Math.exp(-e.deltaY * 0.0012), 0.15, 9); }, { passive: false });
+  const held = new Set<string>();
   window.addEventListener('keydown', (e) => {
     if (e.key === 'q' || e.key === 'Q') cam.goalAngle += Math.PI / 2;
     if (e.key === 'e' || e.key === 'E') cam.goalAngle -= Math.PI / 2;
+    held.add(e.key.toLowerCase());
   });
+  window.addEventListener('keyup', (e) => held.delete(e.key.toLowerCase()));
+  window.addEventListener('blur', () => held.clear());
+  // arrow keys / WASD pan, in screen directions
+  const keyPan = (dt: number) => {
+    let rx = 0, dy = 0;
+    if (held.has('arrowright') || held.has('d')) rx += 1;
+    if (held.has('arrowleft') || held.has('a')) rx -= 1;
+    if (held.has('arrowdown') || held.has('s')) dy += 1;
+    if (held.has('arrowup') || held.has('w')) dy -= 1;
+    if (!rx && !dy) return;
+    const sp = (cam.view / cam.zoom) * 1.4 * dt, ca = Math.cos(cam.angle), sa = Math.sin(cam.angle);
+    cam.target.x += (rx * ca + dy * sa / Math.sin(cam.tilt)) * sp;
+    cam.target.z += (-rx * sa + dy * ca / Math.sin(cam.tilt)) * sp;
+  };
   window.addEventListener('resize', () => renderer.setSize(host.clientWidth, host.clientHeight));
 
   let last = performance.now();
@@ -95,6 +111,7 @@ export function createStage(host: HTMLElement): Stage {
       const now = performance.now(), dt = Math.min(0.05, (now - last) / 1000); last = now;
       cam.zoom += (cam.goalZoom - cam.zoom) * Math.min(1, dt * 8);
       cam.angle += (cam.goalAngle - cam.angle) * Math.min(1, dt * 8);
+      keyPan(dt);
       place();
       renderer.render(scene, camera);
     },

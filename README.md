@@ -2,7 +2,7 @@
 
 A cozy isometric city-builder in the browser: a traffic puzzle (draw roads, watch cars find their way) that grows into a living city you run as mayor. Built with three.js and TypeScript.
 
-**Status:** pre-production done, v0.1 (the road puzzle) in progress.
+**Status:** v0.1 (the road puzzle) first playable. Homes and shops appear, you draw roads from a daily tile budget, cars route and queue, failed trips end the run.
 
 ## Run it
 
@@ -16,7 +16,13 @@ npm run build      # type-check + production build into dist/
 ## Layout
 
 ```
-index.html, src/main.ts      the game (v0.1 starts from a blank map on a 14 m road-tile grid)
+index.html, src/main.ts      the game: input, HUD, main loop
+src/game/tuning.ts           every gameplay number (tune here, not in code)
+src/game/grid.ts             the 30 x 30 tile map
+src/game/roadView.ts         road drawing: asphalt, sidewalks, dashes, crosswalks, jam colors
+src/game/routes.ts           A* routing and lane paths
+src/game/traffic.ts          instanced cars, following and taking turns at crossings
+src/game/city.ts             homes, shops, trips, deadlines, game over
 gallery.html, src/gallery.ts asset gallery: every model in rows, flags any that fail to build
 src/engine/stage.ts          renderer, warm lighting, angled orthographic camera and controls
 src/engine/tick.ts           per-frame callbacks for animated parts (flags, beacons)

@@ -86,7 +86,7 @@ function building({ w, d, h, wall, roof, floors = 1, awning, sign, door = true, 
   if (sign) {
     const tex = signTexture(sign.text, sign.color);
     const sm = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(w * 0.85, 13), Math.min(w * 0.85, 13) / 4), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
-    sm.position.set(0, h - 1.4 + (roofType === 'gable' ? 0 : 0), d / 2 + 0.6); g.add(sm); signs.push(sm);
+    sm.position.set(0, h - 1.4 + (roofType === 'gable' ? 0 : 0), d / 2 + 0.6); g.add(sm);
   }
   return g;
 }

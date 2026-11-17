@@ -15,6 +15,10 @@ Gridlock & Grace: cozy isometric city-builder. Traffic puzzle first (v0.1), then
 - `src/assets/models.ts` is ported as-is and has `@ts-nocheck`. New code goes in typed files.
 - After adding or changing a model, check `gallery.html` reports "All models built."
 
+## v0.1 notes
+- The simulation runs on the main thread in small fixed steps for now; the design calls for a Web Worker once the city gets big.
+- Phone results (Nov 17): 4,000 cars + 6,000 people at 60 fps on Keba's phone in the performance check.
+
 ## Still to port from the Asset Test
 - Meshy GLB fixes: zero-length normal repair, texture recolor (police station navy to teal, house roof variants), texture shrinking.
 - Crowd system (`makeCrowd` / `citizenLook`), weather (rain and snow with the height snapshot), crash scene, ghost road, city depot.

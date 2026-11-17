@@ -2,19 +2,83 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
   <title>Gridlock &amp; Grace</title>
   <style>
-    html, body, #app { margin: 0; height: 100%; overflow: hidden; background: #EADBC4; font-family: Nunito, ui-rounded, system-ui, sans-serif; color: #3F3A4A; }
-    #title { position: fixed; left: 16px; top: 16px; background: #FFFBF4; border-radius: 16px; padding: 12px 16px; box-shadow: 0 6px 18px rgba(63, 58, 74, .12); }
-    #title b { font-size: 18px; font-weight: 900; }
-    #title span { display: block; font-size: 12.5px; opacity: .7; margin-top: 2px; }
-    #title a { color: #4E8FA6; font-weight: 800; }
+    :root { --ink: #3F3A4A; --card: #FFFBF4; }
+    html, body, #app { margin: 0; height: 100%; overflow: hidden; background: #EADBC4; font-family: Nunito, ui-rounded, system-ui, sans-serif; color: var(--ink); user-select: none; }
+    canvas { display: block; touch-action: none; }
+    .card { position: fixed; background: var(--card); border-radius: 18px; box-shadow: 0 6px 20px rgba(63, 58, 74, .14); padding: 12px 16px; z-index: 3; }
+    #top { left: 16px; top: 16px; width: 270px; }
+    #top h1 { margin: 0; font-size: 17px; font-weight: 900; }
+    #day { font-size: 13px; font-weight: 800; opacity: .7; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .stat b { display: block; font-size: 22px; font-weight: 900; line-height: 1.1; }
+    .stat span { font-size: 10.5px; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; opacity: .55; }
+    .bar { height: 6px; background: #F1E6D6; border-radius: 6px; margin-top: 8px; overflow: hidden; }
+    #failbar { height: 100%; width: 0; background: #E07A5F; transition: width .3s; }
+    #homes { font-size: 12px; opacity: .65; margin-top: 6px; }
+    #speed { right: 16px; top: 16px; display: flex; gap: 6px; padding: 8px; }
+    #tools { left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 8px; padding: 8px; }
+    button { border: 0; border-radius: 12px; padding: 8px 13px; font: inherit; font-size: 14px; font-weight: 900; cursor: pointer; background: #F4EFE6; color: var(--ink); }
+    button.on { background: #F2CC8F; }
+    #tools button { padding: 10px 16px; }
+    #legend { right: 16px; bottom: 18px; font-size: 12.5px; font-weight: 800; display: flex; flex-direction: column; gap: 4px; }
+    #legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 7px; vertical-align: -1px; }
+    #help { left: 16px; bottom: 18px; font-size: 12px; line-height: 1.5; max-width: 250px; }
+    #toasts { position: fixed; left: 50%; top: 16px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; z-index: 4; pointer-events: none; }
+    .toast { background: var(--card); border-radius: 999px; padding: 7px 14px; font-weight: 900; font-size: 13.5px; box-shadow: 0 4px 14px rgba(63, 58, 74, .16); transition: opacity .5s, transform .5s; }
+    .toast.good { border-left: 6px solid #81B29A; } .toast.bad { border-left: 6px solid #E07A5F; }
+    .toast.out { opacity: 0; transform: translateY(-8px); }
+    #pins { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
+    .pin { position: absolute; width: 22px; height: 22px; border-radius: 50%; transform: translate(-50%, -100%);
+      background: conic-gradient(var(--c) calc(var(--p, 1) * 360deg), rgba(255, 251, 244, .9) 0); box-shadow: 0 2px 6px rgba(63, 58, 74, .3); }
+    .pin::after { content: ''; position: absolute; inset: 5px; border-radius: 50%; background: var(--c); border: 2px solid #FFFBF4; }
+    .pin.late { animation: pulse .6s infinite alternate; }
+    .pin.stuck::before { content: '!'; position: absolute; left: 50%; top: -18px; transform: translateX(-50%); font-weight: 900; font-size: 14px; color: #C8553D; }
+    .pin.shop { width: auto; height: auto; border-radius: 999px; background: var(--c); color: #FFFBF4; font-weight: 900; font-size: 12px; padding: 3px 10px; white-space: nowrap; }
+    .pin.shop::after { display: none; }
+    @keyframes pulse { to { transform: translate(-50%, -100%) scale(1.25); } }
+    #over { position: fixed; inset: 0; display: none; place-items: center; background: rgba(63, 58, 74, .35); z-index: 10; }
+    #over.show { display: grid; }
+    #over .card { position: static; max-width: 360px; text-align: center; padding: 24px; }
+    #over h2 { margin: 0 0 8px; font-size: 24px; font-weight: 900; }
+    #over p { margin: 0 0 16px; line-height: 1.5; }
+    #over button { background: #E07A5F; color: #FFF8EE; padding: 11px 20px; }
+    @media (max-width: 700px) { #help, #legend { display: none; } #top { width: 230px; } }
   </style>
 </head>
 <body>
   <div id="app"></div>
-  <div id="title"><b>Gridlock &amp; Grace</b><span>v0.1 in progress: blank map ready · <a href="./gallery.html">asset gallery</a></span></div>
+  <div id="pins"></div>
+  <div id="toasts"></div>
+  <div class="card" id="top">
+    <h1>Gridlock &amp; Grace</h1>
+    <div id="day">Day 1 · 7:00 AM</div>
+    <div class="stats">
+      <div class="stat"><b id="tiles">0</b><span>Road tiles</span></div>
+      <div class="stat"><b id="arrived">0</b><span>On time</span></div>
+      <div class="stat"><b id="failed">0</b><span>Failed</span></div>
+    </div>
+    <div class="bar"><div id="failbar"></div></div>
+    <div id="homes"></div>
+  </div>
+  <div class="card" id="speed">
+    <button data-speed="0" title="Pause (space)">❚❚</button>
+    <button data-speed="1">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button>
+  </div>
+  <div class="card" id="tools">
+    <button id="toolRoad" title="R">Draw road</button>
+    <button id="toolErase" title="X">Erase</button>
+    <button id="toolMove" title="M">Move</button>
+    <button id="zoomOut" title="Zoom out">−</button><button id="zoomIn" title="Zoom in">+</button>
+  </div>
+  <div class="card" id="help">
+    <b>Connect every home to the shops.</b> Drag to draw roads. Pins show where each car is going; the ring is time left.
+    Right-drag or arrow keys to pan · scroll to zoom · Q/E rotate · <a href="./gallery.html">asset gallery</a>
+  </div>
+  <div class="card" id="legend"></div>
+  <div id="over"><div class="card"><h2>Gridlock!</h2><p id="overStats"></p><button id="again">Play again</button></div></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
