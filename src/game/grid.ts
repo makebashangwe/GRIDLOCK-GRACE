@@ -27,6 +27,8 @@ export class Grid {
   readonly junction: Uint8Array;
   /** River tiles. A road on water is a bridge, and bridges only run east-west (across the river). */
   readonly water: Uint8Array;
+  /** The highway connection on the west edge: a road tile that can't be erased. Delivery trucks come in here. */
+  readonly entry: number;
   /** Road tiles actually spent on each crossing's control (free upgrade tokens spend none). */
   readonly jspent: Uint8Array;
 
@@ -38,6 +40,7 @@ export class Grid {
     this.load = new Uint16Array(size);
     this.junction = new Uint8Array(size);
     this.water = new Uint8Array(size);
+    this.entry = this.idx(0, Math.floor(this.n / 2));
     this.jspent = new Uint8Array(size);
   }
 

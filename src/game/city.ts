@@ -17,6 +17,8 @@ const HOUSE_COLORS: [string, string][] = [['#F6E7CF', '#E07A5F'], ['#F3E3CB', '#
 /** The block test's code house/shop builder (untyped port). */
 const building = M.building as unknown as (spec: Record<string, unknown>) => THREE.Object3D;
 const tryDispatchNow = (t: number) => t <= 0;
+/** Shops that sell things (and so need deliveries). */
+const stocked = (t: ShopType) => t !== 'tow' && t !== 'depot';
 const FACE_ROT = [Math.PI / 2, 0, -Math.PI / 2, Math.PI];
 
 interface Building extends Placed {
@@ -32,7 +34,7 @@ interface Building extends Placed {
 export interface Home extends Building { kind: 'home'; wants: ShopType; nextTrip: number; trip: Trip | null }
 /** A piece waiting in the player's hand. */
 export type Piece = { kind: 'home'; wants: ShopType } | { kind: 'shop'; type: ShopType };
-export interface Shop extends Building { kind: 'shop'; type: ShopType; served: number }
+export interface Shop extends Building { kind: 'shop'; type: ShopType; served: number; stock: number; truck: Car | null; warned: boolean }
 type AnyBuilding = Home | Shop;
 interface Trip { home: Home; type: ShopType; deadline: number; state: 'waiting' | 'out' | 'shop' | 'back'; failed: boolean; shop?: Shop; car?: Car | null; until?: number }
 
@@ -131,8 +133,9 @@ export class City {
     const info = SHOP_INFO[type];
     const obj = shadowAll(type === 'tow' ? (M.makeHookAndHaulTowShop() as THREE.Object3D)
       : building({ w: 10.5, d: 9, h: 7, wall: '#FFF4E2', roof: info.color, awning: info.color, sign: { text: info.sign, color: info.ink }, roofType: 'flat' }));
-    const shop: Shop = { id: this.nextId++, kind: 'shop', type, i, j, obj, face: this.roadSide(i, j), access: -1, turned: false, pin: this.pin('pin shop'), served: 0 };
-    shop.pin.style.setProperty('--c', info.color); shop.pin.textContent = info.name;
+    const shop: Shop = { id: this.nextId++, kind: 'shop', type, i, j, obj, face: this.roadSide(i, j), access: -1, turned: false, pin: this.pin('pin shop'), served: 0, stock: T.stockMax, truck: null, warned: false };
+    shop.pin.style.setProperty('--c', info.color);
+    shop.pin.innerHTML = `<span>${info.name}</span>` + (stocked(type) ? '<i class="stock"><i></i></i>' : '');
     g.building[c] = shop; this.shops.push(shop);
     this.scene.add(obj); this.connect(shop); this.popIn(obj); this.count(); this.onChange();
     return shop;
@@ -255,6 +258,12 @@ export class City {
   private arriveShop(trip: Trip): void {
     if (trip.car) this.carTrip.delete(trip.car);
     trip.car = null; trip.state = 'shop'; trip.until = this.clock + T.shopVisit;
+    const shop = trip.shop;
+    if (shop && shop.stock <= 0) {   // sold out: the customer is turned away
+      if (!trip.failed) this.fail(trip, `${SHOP_INFO[shop.type].name} is sold out`);
+      return;
+    }
+    if (shop) shop.stock = Math.max(0, shop.stock - T.stockPerTrip);
     if (!trip.failed) {
       this.stats.arrived++; this.week.arrived++; if (trip.shop) trip.shop.served++;
       if (this.stats.arrived % T.tripsPerTile === 0) { this.stats.roadTiles++; this.stats.earned++; this.onEarn(); }
@@ -266,9 +275,9 @@ export class City {
     const h = trip.home; h.trip = null; h.nextTrip = this.clock + T.tripCooldown;
   }
 
-  private fail(trip: Trip): void {
+  private fail(trip: Trip, why?: string): void {
     trip.failed = true; this.stats.failed++; this.week.failed++;
-    this.onEvent(`A trip to ${SHOP_INFO[trip.type].name} missed its deadline`, 'bad');
+    this.onEvent(why ?? `A trip to ${SHOP_INFO[trip.type].name} missed its deadline`, 'bad');
     if (!this.stats.sandbox && this.stats.failed >= T.failLimit) { this.stats.over = true; this.onEvent('Gridlock! The city ran out of patience.', 'bad'); }
   }
 
@@ -310,6 +319,32 @@ export class City {
     if (u === 'patience') this.patience += 15;
     if (u === 'bridges') this.stats.bridges += 2;
     if (u === 'shop') { const type = SHOP_ORDER[this.shopsDealt++ % SHOP_ORDER.length]; this.hand.unshift({ kind: 'shop', type }); this.onChange(); }
+  }
+
+  /* ---------------- deliveries ---------------- */
+  /** Send a delivery truck from the highway to any shop running low. */
+  private updateDeliveries(): void {
+    const g = this.grid;
+    if (!g.road[g.entry]) return;
+    for (const shop of this.shops) {
+      if (!stocked(shop.type) || shop.truck || shop.stock >= T.restockAt) continue;
+      const route = shop.access >= 0 ? findRoute(g, g.entry, shop.access) : null;
+      if (!route) {
+        if (!shop.warned) { shop.warned = true; this.onEvent(`${SHOP_INFO[shop.type].name} is running low: connect it to the highway on the west edge so trucks can restock it`, 'bad'); }
+        continue;
+      }
+      const pts = lanePath(g, [...route, g.idx(shop.i, shop.j)]);
+      if (!this.traffic.canStart(pts)) continue;
+      const truck = M.makeDeliveryTruck(SHOP_INFO[shop.type].color) as THREE.Object3D; shadowAll(truck); truck.scale.setScalar(0.85);
+      shop.truck = this.traffic.addSpecial(pts, truck, () => {
+        shop.stock = T.stockMax; shop.truck = null; shop.warned = false;
+        const back = shop.access >= 0 && g.road[g.entry] ? findRoute(g, shop.access, g.entry) : null;
+        if (back) {
+          const t2 = M.makeDeliveryTruck(SHOP_INFO[shop.type].color) as THREE.Object3D; shadowAll(t2); t2.scale.setScalar(0.85);
+          this.traffic.addSpecial(lanePath(g, [g.idx(shop.i, shop.j), ...back]), t2, () => {}, false);
+        }
+      }, false);
+    }
   }
 
   /* ---------------- crashes and towing ---------------- */
@@ -392,6 +427,7 @@ export class City {
     const types = [...new Set(this.shops.map((s) => s.type))].filter((t) => t !== 'tow');
     this.dispatchT -= realDt;
     this.updateCrashes(tryDispatchNow(this.dispatchT));
+    if (tryDispatchNow(this.dispatchT)) this.updateDeliveries();
     const tryDispatch = this.dispatchT <= 0; if (tryDispatch) this.dispatchT = 0.4;
     for (const h of this.homes) {
       if (!h.trip && this.clock >= h.nextTrip && types.length && Math.random() < gm * rate) {
@@ -459,6 +495,10 @@ export class City {
       s.pin.classList.toggle('compact', compact);
       if (!put(s, 13)) { s.pin.style.display = 'none'; continue; }
       s.pin.style.display = 'block'; s.pin.classList.toggle('stuck', s.access < 0);
+      if (stocked(s.type)) {
+        const bar = s.pin.querySelector<HTMLElement>('.stock > i'); if (bar) bar.style.width = `${(s.stock / T.stockMax) * 100}%`;
+        s.pin.classList.toggle('low', s.stock < T.restockAt); s.pin.classList.toggle('out', s.stock <= 0);
+      }
     }
   }
 
@@ -471,7 +511,7 @@ export class City {
       v: 1, clock: this.clock, nextGrow: this.nextGrow, nextShop: this.nextShop, shopsDealt: this.shopsDealt,
       stats: { ...this.stats }, hand: [...this.hand], roads, water: [...g.water.keys()].filter((c) => g.water[c]), avenues: roads.filter((c) => g.road[c] === 2), goal: this.goal, week: this.week, tokens: this.tokens, patience: this.patience,
       junctions: roads.filter((c) => g.junction[c]).map((c) => [c, g.junction[c], g.jspent[c]] as [number, number, number]),
-      buildings: [...this.homes, ...this.shops].map((b) => ({ kind: b.kind, i: b.i, j: b.j, face: b.face, turned: b.turned, wants: b.kind === 'home' ? b.wants : undefined, type: b.kind === 'shop' ? b.type : undefined })),
+      buildings: [...this.homes, ...this.shops].map((b) => ({ kind: b.kind, i: b.i, j: b.j, face: b.face, turned: b.turned, wants: b.kind === 'home' ? b.wants : undefined, type: b.kind === 'shop' ? b.type : undefined, stock: b.kind === 'shop' ? b.stock : undefined })),
     };
   }
 
@@ -486,6 +526,7 @@ export class City {
       const made = b.kind === 'home' ? this.addHome(b.i, b.j, b.wants ?? 'grocery') : this.addShop(b.type ?? 'grocery', b.i, b.j);
       if (!made) continue;
       made.face = b.face; made.turned = b.turned; this.connect(made);
+      if (made.kind === 'shop' && b.stock !== undefined) made.stock = b.stock;
       made.obj.rotation.y = FACE_ROT[made.face]; delete (made.obj.userData as { grow?: number }).grow; made.obj.scale.setScalar(1);
     }
     this.clock = d.clock; this.nextGrow = d.nextGrow; this.nextShop = d.nextShop; this.shopsDealt = d.shopsDealt;
@@ -501,5 +542,5 @@ export interface SaveData {
   stats: Stats; hand: Piece[]; roads: number[]; avenues?: number[]; water?: number[];
   junctions?: [number, number, number?][];
   goal?: Goal; week?: { arrived: number; failed: number; crashes: number }; tokens?: { lights: number; round: number }; patience?: number;
-  buildings: { kind: 'home' | 'shop'; i: number; j: number; face: number; turned: boolean; wants?: ShopType; type?: ShopType }[];
+  buildings: { kind: 'home' | 'shop'; i: number; j: number; face: number; turned: boolean; wants?: ShopType; type?: ShopType; stock?: number }[];
 }

@@ -63,6 +63,13 @@ export const T = {
   crashChance: 0.14,
   crashSelfClear: 150,
 
+  /** Shop stock: each customer uses some; below restockAt a delivery truck comes from the highway.
+      An empty shop turns customers away (their trip counts as late). */
+  stockMax: 100,
+  stockPerTrip: 6,
+  restockAt: 40,
+  truckSpeed: 9,
+
   /** Bridge pieces to start with (a crossing of the 2-wide river takes 2). More come from Sunday picks. */
   startBridges: 4,
 
@@ -77,12 +84,13 @@ export const T = {
   jamAt: 5,
 };
 
-export type ShopType = 'grocery' | 'cafe' | 'pizza' | 'tow';
+export type ShopType = 'grocery' | 'cafe' | 'pizza' | 'tow' | 'depot';
 export const SHOP_INFO: Record<ShopType, { name: string; sign: string; color: string; ink: string }> = {
   grocery: { name: 'Fresh Market', sign: 'Fresh Market', color: '#81B29A', ink: '#4E8F6A' },
   cafe: { name: 'Corner Café', sign: 'Corner Café', color: '#4E8FA6', ink: '#3B7187' },
   pizza: { name: 'Speedy Slice', sign: 'Speedy Slice', color: '#E07A5F', ink: '#C8553D' },
   tow: { name: 'Hook & Haul', sign: 'Hook & Haul', color: '#F4B860', ink: '#B57B12' },
+  depot: { name: 'City Depot', sign: 'Public Works', color: '#6D597A', ink: '#4F3F5C' },
 };
 /** Shops homes make trips to, in the order new ones are dealt. Hook & Haul is dealt when the first crash happens. */
 export const SHOP_ORDER: ShopType[] = ['grocery', 'cafe', 'pizza'];

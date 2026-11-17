@@ -30,8 +30,10 @@ export interface Car {
   wait: number;
   /** In a crash: stopped where it is until towed. */
   crashed: boolean;
-  /** Service vehicles (the tow truck) are their own model and ignore traffic. */
+  /** Service vehicles are their own model (tow truck, delivery truck). */
   special?: THREE.Object3D;
+  /** Drives straight through traffic (the tow truck on a call). Delivery trucks queue like everyone else. */
+  ghost?: boolean;
   jitter: number;
 }
 
@@ -92,9 +94,9 @@ export class Traffic {
   remove(car: Car): void { const k = this.cars.indexOf(car); if (k >= 0) this.cars.splice(k, 1); if (car.special) this.scene.remove(car.special); }
 
   /** A service vehicle with its own model (drives through traffic, never crashes). */
-  addSpecial(pts: Pt[], obj: THREE.Object3D, onArrive: () => void): Car | null {
+  addSpecial(pts: Pt[], obj: THREE.Object3D, onArrive: () => void, ghost = true): Car | null {
     const car = this.add(pts, onArrive); if (!car) return null;
-    car.special = obj; this.scene.add(obj); this.place(car); return car;
+    car.special = obj; car.ghost = ghost; this.scene.add(obj); this.place(car); return car;
   }
 
   /** Called when two cars crash: (the two cars, the crossing tile). */
@@ -152,8 +154,8 @@ export class Traffic {
     for (const c of this.cars) {
       if (c.crashed) continue;
       let blocked = false;
-      for (const o of c.special ? [] : this.near(c.x, c.z)) {
-        if (o === c || o.special) continue;
+      for (const o of c.ghost ? [] : this.near(c.x, c.z)) {
+        if (o === c || o.ghost) continue;
         const dx = o.x - c.x, dz = o.z - c.z, along = dx * c.hx + dz * c.hz;
         if (along <= 0.2 || along > T.followGap) continue;
         const side = Math.abs(dx * -c.hz + dz * c.hx);
@@ -163,10 +165,11 @@ export class Traffic {
         if (same > 0.6) { blocked = true; break; }          // queue behind the car ahead
         if (same > -0.6 && o.id < c.id) { blocked = true; break; }   // crossing traffic: lower number goes first
       }
-      if (!blocked && !c.special && this.holdAtCrossing(c, clock, dt)) blocked = true;
+      if (!blocked && !c.ghost && this.holdAtCrossing(c, clock, dt)) blocked = true;
       const [ti, tj] = g.tileAt(c.x, c.z), inRound = g.inside(ti, tj) && g.control(g.idx(ti, tj)) === J_ROUND;
       const onAvenue = g.inside(ti, tj) && g.isAvenue(g.idx(ti, tj));
-      const want = blocked ? 0 : inRound ? T.roundSpeed : onAvenue && !c.special ? T.avenueSpeed : T.carSpeed;
+      const top = c.special && !c.ghost ? T.truckSpeed : onAvenue && !c.special ? T.avenueSpeed : T.carSpeed;
+      const want = blocked ? 0 : inRound ? T.roundSpeed : top;
       c.v += Math.max(-T.carAccel * 2.5 * dt, Math.min(T.carAccel * dt, want - c.v));
       c.s += c.v * dt;
       if (c.s >= c.total) { arrived.push(c); continue; }

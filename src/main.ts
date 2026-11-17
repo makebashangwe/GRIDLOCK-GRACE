@@ -6,6 +6,8 @@ import { runTicks } from './engine/tick';
 import { Grid } from './game/grid';
 import { RoadView } from './game/roadView';
 import { TerrainView, makeRiver } from './game/terrain';
+import { makeOnRampEntranceSign } from './assets/models';
+import { shadowAll } from './assets/core';
 import { JunctionView } from './game/junctions';
 import { J_NONE, J_STOP, J_LIGHT, J_ROUND } from './game/grid';
 import { Traffic } from './game/traffic';
@@ -33,6 +35,17 @@ let loaded = false;
 try { const raw = localStorage.getItem(SAVE_KEY); if (raw) { city.load(JSON.parse(raw) as SaveData); loaded = true; } } catch { /* a broken save just means a fresh town */ }
 if (!loaded) { makeRiver(grid); for (let c = 0; c < grid.water.length; c++) if (grid.water[c]) city.clearTree(c); }
 const terrain = new TerrainView(scene, grid); terrain.rebuild();
+// the highway connection on the west edge: always a road, can't be erased
+if (!grid.building[grid.entry]) { grid.road[grid.entry] = Math.max(1, grid.road[grid.entry]); city.clearTree(grid.entry); }
+{
+  const [ei, ej] = grid.ij(grid.entry), { x, z } = grid.center(ei, ej);
+  const stub = new THREE.Mesh(new THREE.BoxGeometry(60, 2.6, T.tile), new THREE.MeshStandardMaterial({ color: '#B9A58F', roughness: 0.95 }));
+  stub.position.set(x - T.tile / 2 - 30, -1.27, z); scene.add(stub);
+  const deck = new THREE.Mesh(new THREE.PlaneGeometry(60, 9.6).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#5E5A6B', roughness: 0.9 }));
+  deck.position.set(x - T.tile / 2 - 30, 0.04, z); deck.receiveShadow = true; scene.add(deck);
+  const sign = makeOnRampEntranceSign('HIGHWAY') as THREE.Object3D; shadowAll(sign); sign.scale.setScalar(1.3);
+  sign.position.set(x - 2, 0, z - T.tile / 2 - 1); sign.rotation.y = -Math.PI / 2; scene.add(sign);
+}
 const saveNow = () => { try { if (!city.stats.over) localStorage.setItem(SAVE_KEY, JSON.stringify(city.save())); } catch { /* storage full or blocked */ } };
 setInterval(saveNow, 5000);
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
@@ -102,6 +115,7 @@ function apply(i: number, j: number): boolean {
   if (tool === 'erase') {
     if (grid.building[c]) { city.remove(i, j); return true; }
     if (!grid.road[c]) return false;
+    if (c === grid.entry) { toast('That road is the highway connection: delivery trucks come in there', 'bad'); return false; }
     if (grid.water[c]) city.stats.bridges++; else city.stats.roadTiles += grid.road[c];
     city.stats.roadTiles += grid.jspent[c]; grid.junction[c] = J_NONE; grid.jspent[c] = 0; grid.road[c] = 0;
     return true;
