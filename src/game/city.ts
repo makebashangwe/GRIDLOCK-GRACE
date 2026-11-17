@@ -36,6 +36,18 @@ export interface Shop extends Building { kind: 'shop'; type: ShopType; served: n
 type AnyBuilding = Home | Shop;
 interface Trip { home: Home; type: ShopType; deadline: number; state: 'waiting' | 'out' | 'shop' | 'back'; failed: boolean; shop?: Shop; car?: Car | null; until?: number }
 
+export type GoalId = 'trips' | 'late' | 'nocrash' | 'hand';
+export interface Goal { id: GoalId; target: number }
+export type UpgradeId = 'roads' | 'lights' | 'round' | 'patience' | 'shop';
+export const UPGRADES: Record<UpgradeId, { name: string; text: string }> = {
+  roads: { name: '+20 road tiles', text: 'More road, right now.' },
+  lights: { name: '2 free traffic lights', text: 'Your next two lights cost no road.' },
+  round: { name: 'A free roundabout', text: 'Your next roundabout costs no road.' },
+  patience: { name: 'Patient drivers', text: 'Every trip gets 15 more minutes before it counts as late.' },
+  shop: { name: 'A new shop', text: 'The next shop arrives in your hand now.' },
+};
+export interface WeekEnd { week: number; goal: Goal; met: boolean; bonus: number; options: UpgradeId[] }
+
 interface Crash { tile: number; cars: Car[]; since: number; tow: Car | null; pin: HTMLDivElement }
 
 export interface Stats { crashes: number; weekday: number; rush: boolean; sandbox: boolean; earned: number; arrived: number; failed: number; homes: number; shops: number; demand: number; roadTiles: number; day: number; minute: number; over: boolean }
@@ -59,6 +71,15 @@ export class City {
   onChange: () => void = () => {};
   /** Called when an on-time trip earns a road tile. */
   onEarn: () => void = () => {};
+
+  /** Weekly goal and what's counted toward it. */
+  goal: Goal = { id: 'trips', target: 20 };
+  week = { arrived: 0, failed: 0, crashes: 0 };
+  /** Upgrade tokens and bonuses from Sunday picks. */
+  tokens = { lights: 0, round: 0 };
+  patience = 0;
+  /** Called Sunday night when a week ends; the game waits for the player to pick an upgrade. */
+  onWeekEnd: (w: WeekEnd) => void = () => {};
 
   /** Crashes waiting for the tow truck. */
   private crashes: Crash[] = [];
@@ -234,7 +255,7 @@ export class City {
     if (trip.car) this.carTrip.delete(trip.car);
     trip.car = null; trip.state = 'shop'; trip.until = this.clock + T.shopVisit;
     if (!trip.failed) {
-      this.stats.arrived++; if (trip.shop) trip.shop.served++;
+      this.stats.arrived++; this.week.arrived++; if (trip.shop) trip.shop.served++;
       if (this.stats.arrived % T.tripsPerTile === 0) { this.stats.roadTiles++; this.stats.earned++; this.onEarn(); }
     }
   }
@@ -245,14 +266,53 @@ export class City {
   }
 
   private fail(trip: Trip): void {
-    trip.failed = true; this.stats.failed++;
+    trip.failed = true; this.stats.failed++; this.week.failed++;
     this.onEvent(`A trip to ${SHOP_INFO[trip.type].name} missed its deadline`, 'bad');
     if (!this.stats.sandbox && this.stats.failed >= T.failLimit) { this.stats.over = true; this.onEvent('Gridlock! The city ran out of patience.', 'bad'); }
   }
 
+  /* ---------------- weekly goals ---------------- */
+  goalText(): { text: string; progress: string; frac: number } {
+    const g = this.goal, w = this.week, total = w.arrived + w.failed, latePct = total ? (w.failed / total) * 100 : 0;
+    switch (g.id) {
+      case 'trips': return { text: `Get ${g.target} trips there on time`, progress: `${w.arrived} / ${g.target}`, frac: Math.min(1, w.arrived / g.target) };
+      case 'late': return { text: `Keep late trips under ${g.target}% (15+ trips)`, progress: total ? `${latePct.toFixed(0)}% late · ${total} trips` : 'no trips yet', frac: total >= 15 && latePct < g.target ? 1 : Math.min(0.9, total / 15) };
+      case 'nocrash': return { text: 'Get through the week with no crashes', progress: w.crashes ? `${w.crashes} crash${w.crashes > 1 ? 'es' : ''}` : 'no crashes yet', frac: w.crashes ? 0 : 1 };
+      case 'hand': return { text: 'End the week with an empty hand', progress: `${this.hand.length} piece${this.hand.length === 1 ? '' : 's'} left`, frac: this.hand.length ? 0.3 : 1 };
+    }
+  }
+  private goalMet(): boolean {
+    const g = this.goal, w = this.week, total = w.arrived + w.failed;
+    if (g.id === 'trips') return w.arrived >= g.target;
+    if (g.id === 'late') return total >= 15 && (w.failed / total) * 100 < g.target;
+    if (g.id === 'nocrash') return w.crashes === 0;
+    return this.hand.length === 0;
+  }
+  private endWeek(week: number): void {
+    const met = this.goalMet(), bonus = met ? 15 : 0;
+    this.stats.roadTiles += bonus;
+    const pool: UpgradeId[] = ['roads', 'lights', 'round', 'patience', 'shop'];
+    for (let k = pool.length - 1; k > 0; k--) { const r = Math.floor(Math.random() * (k + 1)); [pool[k], pool[r]] = [pool[r], pool[k]]; }
+    const w: WeekEnd = { week, goal: this.goal, met, bonus, options: pool.slice(0, met ? 3 : 2) };
+    // next week's goal
+    const ids: GoalId[] = ['trips', 'late', 'nocrash', 'hand'];
+    const id = ids[Math.floor(Math.random() * ids.length)];
+    this.goal = { id, target: id === 'trips' ? Math.max(20, this.homes.length * 6) : id === 'late' ? 5 : 0 };
+    this.week = { arrived: 0, failed: 0, crashes: 0 };
+    this.onWeekEnd(w);
+  }
+  /** Apply the upgrade the player picked. */
+  pick(u: UpgradeId): void {
+    if (u === 'roads') this.stats.roadTiles += 20;
+    if (u === 'lights') this.tokens.lights += 2;
+    if (u === 'round') this.tokens.round += 1;
+    if (u === 'patience') this.patience += 15;
+    if (u === 'shop') { const type = SHOP_ORDER[this.shopsDealt++ % SHOP_ORDER.length]; this.hand.unshift({ kind: 'shop', type }); this.onChange(); }
+  }
+
   /* ---------------- crashes and towing ---------------- */
   private crash(a: Car, b: Car, tile: number): void {
-    this.stats.crashes++;
+    this.stats.crashes++; this.week.crashes++;
     for (const car of [a, b]) { const trip = this.carTrip.get(car); if (trip && !trip.failed) this.fail(trip); }
     const pin = document.createElement('div'); pin.className = 'pin crash'; pin.innerHTML = '<b>!</b>Crash'; this.pinLayer.appendChild(pin);
     this.crashes.push({ tile, cars: [a, b], since: this.clock, tow: null, pin });
@@ -312,7 +372,10 @@ export class City {
     const before = Math.floor(this.clock / 1440);
     this.clock += gm;
     const day = Math.floor(this.clock / 1440);
-    if (day > before) { this.stats.roadTiles += T.dailyRoadTiles; this.onEvent(`Day ${day + 1} · +${T.dailyRoadTiles} road tiles`, 'good'); }
+    if (day > before) {
+      this.stats.roadTiles += T.dailyRoadTiles; this.onEvent(`Day ${day + 1} · +${T.dailyRoadTiles} road tiles`, 'good');
+      if (day % 7 === 0) this.endWeek(day / 7);
+    }
     this.stats.day = day + 1; this.stats.minute = this.clock % 1440; this.stats.weekday = day % 7;
     const rate = T.baseTripRate * this.rhythm();
 
@@ -331,7 +394,7 @@ export class City {
     for (const h of this.homes) {
       if (!h.trip && this.clock >= h.nextTrip && types.length && Math.random() < gm * rate) {
         const type: ShopType = (types as ShopType[]).includes(h.wants) && Math.random() < T.wantShare ? h.wants : types[Math.floor(Math.random() * types.length)];
-        h.trip = { home: h, type, deadline: this.clock + T.tripDeadline, state: 'waiting', failed: false };
+        h.trip = { home: h, type, deadline: this.clock + T.tripDeadline + this.patience, state: 'waiting', failed: false };
       }
       const trip = h.trip; if (!trip) continue;
       if (trip.state === 'waiting' && tryDispatch) this.dispatch(trip);
@@ -375,7 +438,7 @@ export class City {
       const t = h.trip, blocked = h.access < 0, show = (blocked || (!!t && (t.state === 'waiting' || t.state === 'out'))) && put(h, 12);
       h.pin.style.display = show ? 'block' : 'none';
       if (!show) continue;
-      const left = t ? Math.max(0, (t.deadline - this.clock) / T.tripDeadline) : 1;
+      const left = t ? Math.max(0, (t.deadline - this.clock) / (T.tripDeadline + this.patience)) : 1;
       h.pin.style.setProperty('--c', t?.failed ? '#C8553D' : t ? SHOP_INFO[t.type].color : '#B8A99A');
       h.pin.style.setProperty('--p', String(t?.failed ? 1 : left));
       h.pin.classList.toggle('late', !!t?.failed);
@@ -398,8 +461,8 @@ export class City {
     for (let c = 0; c < g.road.length; c++) if (g.road[c]) roads.push(c);
     return {
       v: 1, clock: this.clock, nextGrow: this.nextGrow, nextShop: this.nextShop, shopsDealt: this.shopsDealt,
-      stats: { ...this.stats }, hand: [...this.hand], roads,
-      junctions: roads.filter((c) => g.junction[c]).map((c) => [c, g.junction[c]] as [number, number]),
+      stats: { ...this.stats }, hand: [...this.hand], roads, goal: this.goal, week: this.week, tokens: this.tokens, patience: this.patience,
+      junctions: roads.filter((c) => g.junction[c]).map((c) => [c, g.junction[c], g.jspent[c]] as [number, number, number]),
       buildings: [...this.homes, ...this.shops].map((b) => ({ kind: b.kind, i: b.i, j: b.j, face: b.face, turned: b.turned, wants: b.kind === 'home' ? b.wants : undefined, type: b.kind === 'shop' ? b.type : undefined })),
     };
   }
@@ -407,7 +470,8 @@ export class City {
   load(d: SaveData): void {
     const g = this.grid;
     for (const c of d.roads) { g.road[c] = 1; this.clearTree(c); }
-    for (const [c, k] of d.junctions ?? []) g.junction[c] = k;
+    for (const [c, k, spent] of d.junctions ?? []) { g.junction[c] = k; g.jspent[c] = spent ?? 0; }
+    if (d.goal) this.goal = d.goal; if (d.week) this.week = d.week; if (d.tokens) this.tokens = d.tokens; this.patience = d.patience ?? 0;
     for (const b of d.buildings) {
       const made = b.kind === 'home' ? this.addHome(b.i, b.j, b.wants ?? 'grocery') : this.addShop(b.type ?? 'grocery', b.i, b.j);
       if (!made) continue;
@@ -425,6 +489,7 @@ export interface SaveData {
   v: 1;
   clock: number; nextGrow: number; nextShop: number; shopsDealt: number;
   stats: Stats; hand: Piece[]; roads: number[];
-  junctions?: [number, number][];
+  junctions?: [number, number, number?][];
+  goal?: Goal; week?: { arrived: number; failed: number; crashes: number }; tokens?: { lights: number; round: number }; patience?: number;
   buildings: { kind: 'home' | 'shop'; i: number; j: number; face: number; turned: boolean; wants?: ShopType; type?: ShopType }[];
 }

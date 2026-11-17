@@ -25,6 +25,8 @@ export class Grid {
   readonly load: Uint16Array;
   /** Crossing control per tile (J_NONE, J_STOP, J_LIGHT, J_ROUND). */
   readonly junction: Uint8Array;
+  /** Road tiles actually spent on each crossing's control (free upgrade tokens spend none). */
+  readonly jspent: Uint8Array;
 
   constructor() {
     const size = this.n * this.n;
@@ -33,6 +35,7 @@ export class Grid {
     this.tree = new Uint8Array(size);
     this.load = new Uint16Array(size);
     this.junction = new Uint8Array(size);
+    this.jspent = new Uint8Array(size);
   }
 
   idx(i: number, j: number): number { return j * this.n + i; }

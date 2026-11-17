@@ -9,7 +9,7 @@ import { RoadView } from './game/roadView';
 import { JunctionView } from './game/junctions';
 import { J_NONE, J_STOP, J_LIGHT, J_ROUND } from './game/grid';
 import { Traffic } from './game/traffic';
-import { City, type SaveData } from './game/city';
+import { City, UPGRADES, type SaveData, type WeekEnd } from './game/city';
 import { T, SHOP_INFO, SHOP_ORDER } from './game/tuning';
 
 const stage = createStage(document.getElementById('app')!);
@@ -66,11 +66,15 @@ const nextJunction = (k: number) => (k + 1) % 4;
 function cycleJunction(i: number, j: number): void {
   const c = grid.idx(i, j);
   if (!grid.isCrossing(c)) { toast('Crossings are where 3 or 4 roads meet', 'bad'); return; }
-  const from = grid.junction[c], to = nextJunction(from), delta = junctionCost(to) - junctionCost(from);
-  if (delta > city.stats.roadTiles) { toast(`${J_INFO[to].name} needs ${junctionCost(to)} road tiles`, 'bad'); return; }
-  city.stats.roadTiles -= delta; grid.junction[c] = to;
+  const from = grid.junction[c], to = nextJunction(from);
+  // a free token from a Sunday pick covers a light or a roundabout
+  const token = to === J_LIGHT && city.tokens.lights > 0 ? 'lights' : to === J_ROUND && city.tokens.round > 0 ? 'round' : null;
+  const cost = token ? 0 : junctionCost(to), refund = grid.jspent[c];
+  if (cost - refund > city.stats.roadTiles) { toast(`${J_INFO[to].name} needs ${junctionCost(to)} road tiles`, 'bad'); return; }
+  city.stats.roadTiles += refund - cost; grid.jspent[c] = cost; grid.junction[c] = to;
+  if (token) city.tokens[token]--;
   roads.rebuild(); junctions.sync(); city.roadsChanged();
-  toast(`${J_INFO[to].name}`, 'good');
+  toast(`${J_INFO[to].name}${token ? ' (free)' : ''}`, 'good');
 }
 
 /** One tile of a drag: roads go down, erase removes a building (back to the hand) or a road. */
@@ -85,7 +89,7 @@ function apply(i: number, j: number): boolean {
   if (tool === 'erase') {
     if (grid.building[c]) { city.remove(i, j); return true; }
     if (!grid.road[c]) return false;
-    city.stats.roadTiles += 1 + junctionCost(grid.junction[c]); grid.junction[c] = J_NONE; grid.road[c] = 0;
+    city.stats.roadTiles += 1 + grid.jspent[c]; grid.junction[c] = J_NONE; grid.jspent[c] = 0; grid.road[c] = 0;
     return true;
   }
   return false;
@@ -204,6 +208,8 @@ function hud() {
   $('failed').textContent = s.sandbox ? String(s.failed) : `${s.failed} / ${T.failLimit}`;
   ($('failbar') as HTMLElement).style.width = s.sandbox ? '0%' : `${(s.failed / T.failLimit) * 100}%`;
   $('mode').textContent = s.sandbox ? 'Sandbox' : '';
+  const gl = city.goalText(); $('goalText').textContent = gl.text; $('goalProg').textContent = gl.progress; ($('goalBar') as HTMLElement).style.width = `${gl.frac * 100}%`;
+  const tk = city.tokens; $('tokens').textContent = [tk.lights ? `${tk.lights} free light${tk.lights > 1 ? 's' : ''}` : '', tk.round ? `${tk.round} free roundabout${tk.round > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
   $('homes').textContent = `${s.homes} homes · ${s.shops} shops · ${traffic.cars.length} cars · room for ${s.demand} more`;
   drawHand();
 }
@@ -213,6 +219,19 @@ function gameOver() {
   $('overStats').textContent = `Too many trips ran late. Your town reached Day ${s.day}, ${clock(s.minute)}, with ${n(s.homes, 'home')} and ${n(s.shops, 'shop')}; ${n(s.arrived, 'trip')} arrived on time.`;
   $('over').classList.add('show');
 }
+let speedBeforeWeek = 1;
+city.onWeekEnd = (w: WeekEnd) => {
+  speedBeforeWeek = speed || 1; setSpeed(0);
+  const gl = { trips: `Get ${w.goal.target} trips there on time`, late: `Keep late trips under ${w.goal.target}%`, nocrash: 'No crashes all week', hand: 'End the week with an empty hand' }[w.goal.id];
+  $('weekTitle').textContent = `Week ${w.week} done`;
+  $('weekGoal').innerHTML = w.met ? `<b>Goal met:</b> ${gl}. +${w.bonus} road tiles, and you get three choices.` : `<b>Goal missed:</b> ${gl}. Pick one of two upgrades.`;
+  $('weekOptions').innerHTML = w.options.map((u) => `<button data-up="${u}"><b>${UPGRADES[u].name}</b><span>${UPGRADES[u].text}</span></button>`).join('');
+  document.querySelectorAll<HTMLButtonElement>('[data-up]').forEach((b) => (b.onclick = () => {
+    city.pick(b.dataset.up as keyof typeof UPGRADES); $('week').classList.remove('show'); setSpeed(speedBeforeWeek); hud(); saveNow();
+    toast(`New week: ${city.goalText().text}`, 'good');
+  }));
+  $('week').classList.add('show');
+};
 $('again').onclick = () => { try { localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ } location.reload(); };
 // keep building: the town carries on in Sandbox (no failed-trip limit)
 $('keep').onclick = () => { city.stats.over = false; city.stats.sandbox = true; $('over').classList.remove('show'); saveNow(); toast('Sandbox: keep building, no fail limit', 'good'); };
@@ -220,7 +239,7 @@ $('newTown').onclick = () => { if (confirm('Start a new town? This one will be c
 
 /* ---------- day and night ---------- */
 const hemi = scene.children.find((o) => (o as THREE.HemisphereLight).isHemisphereLight) as THREE.HemisphereLight;
-const DAY_BG = new THREE.Color('#EADBC4'), NIGHT_BG = new THREE.Color('#4F4A63'), DUSK_BG = new THREE.Color('#E9B99A');
+const DAY_BG = new THREE.Color('#EADBC4'), NIGHT_BG = new THREE.Color('#6A6380'), DUSK_BG = new THREE.Color('#E9B99A');
 function daylight(m: number): number {   // 0 at night, 1 in the day, smooth dawn (5:30-7:30) and dusk (18:30-20:30)
   const h = m / 60, ramp = (a: number, b: number, x: number) => Math.min(1, Math.max(0, (x - a) / (b - a)));
   const v = ramp(5.5, 7.5, h) * (1 - ramp(18.5, 20.5, h));
@@ -228,7 +247,7 @@ function daylight(m: number): number {   // 0 at night, 1 in the day, smooth daw
 }
 function light(m: number) {
   const d = daylight(m), dusk = Math.max(0, 1 - Math.abs(d - 0.5) * 2) * (m > 12 * 60 ? 1 : 0.6);
-  hemi.intensity = 0.55 + 1.0 * d; stage.sun.intensity = 0.25 + 2.05 * d;
+  hemi.intensity = 0.85 + 0.7 * d; stage.sun.intensity = 0.45 + 1.85 * d;
   (scene.background as THREE.Color).copy(NIGHT_BG).lerp(DAY_BG, d).lerp(DUSK_BG, dusk * 0.5);
 }
 
@@ -250,4 +269,4 @@ function loop(now: number) {
 }
 requestAnimationFrame(loop);
 setTool('place'); setSpeed(1);
-(window as unknown as { __game: unknown }).__game = { city, grid, traffic, cam, roads, junction: (i: number, j: number) => cycleJunction(i, j), paint: (i: number, j: number) => { const was = tool; tool = 'road'; apply(i, j); tool = was; roads.rebuild(); junctions.sync(); city.roadsChanged(); } };
+(window as unknown as { __game: unknown }).__game = { city, grid, traffic, cam, roads, junction: (i: number, j: number) => cycleJunction(i, j), endWeek: () => { city.clock = (Math.floor(city.clock / 1440 / 7) + 1) * 7 * 1440 - 1; }, paint: (i: number, j: number) => { const was = tool; tool = 'road'; apply(i, j); tool = was; roads.rebuild(); junctions.sync(); city.roadsChanged(); } };

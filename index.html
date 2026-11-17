@@ -22,6 +22,21 @@
     .bar { height: 6px; background: #F1E6D6; border-radius: 6px; margin-top: 8px; overflow: hidden; }
     #failbar { height: 100%; width: 0; background: #E07A5F; transition: width .3s; }
     #homes { font-size: 12px; opacity: .65; margin-top: 6px; }
+    .goal { margin-top: 10px; padding-top: 9px; border-top: 1px solid #EFE4D4; font-size: 13px; font-weight: 800; }
+    .glabel { font-size: 10.5px; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; opacity: .55; }
+    .gbar { height: 6px; background: #F1E6D6; border-radius: 6px; margin: 6px 0 3px; overflow: hidden; }
+    #goalBar { height: 100%; width: 0; background: #81B29A; transition: width .3s; }
+    #goalProg, #tokens { font-size: 12px; font-weight: 700; opacity: .7; }
+    #tokens:empty { display: none; } #tokens { color: #4E8FA6; opacity: 1; }
+    #week { position: fixed; inset: 0; display: none; place-items: center; background: rgba(63, 58, 74, .35); z-index: 10; }
+    #week.show { display: grid; }
+    #week .card { position: static; max-width: 420px; padding: 24px; text-align: center; }
+    #week h2 { margin: 0 0 8px; font-size: 24px; font-weight: 900; }
+    #week p { margin: 0 0 14px; line-height: 1.5; }
+    #weekOptions { display: flex; flex-direction: column; gap: 8px; }
+    #weekOptions button { text-align: left; padding: 12px 14px; background: #F7EEDF; display: flex; flex-direction: column; gap: 2px; }
+    #weekOptions button:hover { background: #F2CC8F; }
+    #weekOptions span { font-weight: 700; font-size: 12.5px; opacity: .75; }
     #speed { right: 16px; top: 16px; display: flex; gap: 6px; padding: 8px; }
     #tools { left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 8px; padding: 8px; }
     button { border: 0; border-radius: 12px; padding: 8px 13px; font: inherit; font-size: 14px; font-weight: 900; cursor: pointer; background: #F4EFE6; color: var(--ink); }
@@ -86,6 +101,7 @@
       <div class="stat"><b id="failed">0</b><span>Failed</span></div>
     </div>
     <div class="bar"><div id="failbar"></div></div>
+    <div class="goal"><div class="glabel">This week</div><div id="goalText"></div><div class="gbar"><div id="goalBar"></div></div><div id="goalProg"></div><div id="tokens"></div></div>
     <div id="homes"></div>
     <button id="newTown" class="link">New town</button>
   </div>
@@ -111,6 +127,7 @@
   <div class="card" id="legend"></div>
   <div class="card" id="hand"><div class="title">Your hand</div><div id="handList"></div></div>
   <div id="hint"></div>
+  <div id="week"><div class="card"><h2 id="weekTitle">Week done</h2><p id="weekGoal"></p><div id="weekOptions"></div></div></div>
   <div id="over"><div class="card"><h2>Gridlock!</h2><p id="overStats"></p><p class="small">Love this town? Keep building it in Sandbox, with no fail limit.</p><div class="row"><button id="keep">Keep building</button><button id="again" class="ghost">Start over</button></div></div></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
