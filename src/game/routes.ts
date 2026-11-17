@@ -21,7 +21,7 @@ export function findRoute(g: Grid, from: number, to: number): number[] | null {
     for (let d = 0; d < 4; d++) {
       const ni = i + DX[d], nj = j + DZ[d];
       if (!g.isRoad(ni, nj)) continue;
-      const nc = g.idx(ni, nj), step = 1 + Math.min(g.load[nc], 8) * 0.35;
+      const nc = g.idx(ni, nj), av = g.isAvenue(nc), step = (av ? 0.65 : 1) + Math.min(g.load[nc], 8) * (av ? 0.15 : 0.35);
       if (cost[c] + step < cost[nc]) { cost[nc] = cost[c] + step; prev[nc] = c; open.push(nc); }
     }
   }
@@ -33,14 +33,16 @@ export function findRoute(g: Grid, from: number, to: number): number[] | null {
 export interface Pt { x: number; z: number }
 
 /** Lane path through a chain of tiles: start building tile, road tiles..., end building tile.
-    Cars drive on the right, cross tile edges in their lane, and round each turn with a curve. */
-export function lanePath(g: Grid, chain: number[]): Pt[] {
+    Cars drive on the right, cross tile edges in their lane, and round each turn with a curve.
+    `lane` picks the inner (0) or outer (1) lane on avenues. */
+export function lanePath(g: Grid, chain: number[], lane = 0): Pt[] {
   const pts: Pt[] = [];
   const dirOf = (a: number, b: number) => { const [ai, aj] = g.ij(a), [bi, bj] = g.ij(b); for (let d = 0; d < 4; d++) if (ai + DX[d] === bi && aj + DZ[d] === bj) return d; return 0; };
   const edge = (a: number, b: number): Pt => {
     const d = dirOf(a, b), [ai, aj] = g.ij(a), c = g.center(ai, aj);
     const rx = -DZ[d], rz = DX[d];   // right-hand side of travel
-    return { x: c.x + DX[d] * T.tile / 2 + rx * T.laneOffset, z: c.z + DZ[d] * T.tile / 2 + rz * T.laneOffset };
+    const off = g.isAvenue(a) && g.isAvenue(b) ? T.avenueLanes[lane] : T.laneOffset;   // on avenues, keep to this car's lane
+    return { x: c.x + DX[d] * T.tile / 2 + rx * off, z: c.z + DZ[d] * T.tile / 2 + rz * off };
   };
   for (let k = 0; k < chain.length - 1; k++) {
     const e = edge(chain[k], chain[k + 1]);

@@ -41,7 +41,9 @@ export class Grid {
   idx(i: number, j: number): number { return j * this.n + i; }
   ij(c: number): [number, number] { return [c % this.n, Math.floor(c / this.n)]; }
   inside(i: number, j: number): boolean { return i >= 0 && j >= 0 && i < this.n && j < this.n; }
-  isRoad(i: number, j: number): boolean { return this.inside(i, j) && this.road[this.idx(i, j)] === 1; }
+  /** Road tiles hold 1 for a street, 2 for an avenue. */
+  isRoad(i: number, j: number): boolean { return this.inside(i, j) && this.road[this.idx(i, j)] > 0; }
+  isAvenue(c: number): boolean { return this.road[c] === 2; }
   isFree(i: number, j: number): boolean { const c = this.idx(i, j); return this.inside(i, j) && !this.road[c] && !this.building[c]; }
 
   /** World position of a tile's center. */

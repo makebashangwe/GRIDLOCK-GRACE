@@ -165,7 +165,8 @@ export class Traffic {
       }
       if (!blocked && !c.special && this.holdAtCrossing(c, clock, dt)) blocked = true;
       const [ti, tj] = g.tileAt(c.x, c.z), inRound = g.inside(ti, tj) && g.control(g.idx(ti, tj)) === J_ROUND;
-      const want = blocked ? 0 : inRound ? T.roundSpeed : T.carSpeed;
+      const onAvenue = g.inside(ti, tj) && g.isAvenue(g.idx(ti, tj));
+      const want = blocked ? 0 : inRound ? T.roundSpeed : onAvenue && !c.special ? T.avenueSpeed : T.carSpeed;
       c.v += Math.max(-T.carAccel * 2.5 * dt, Math.min(T.carAccel * dt, want - c.v));
       c.s += c.v * dt;
       if (c.s >= c.total) { arrived.push(c); continue; }

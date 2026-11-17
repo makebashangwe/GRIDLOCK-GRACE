@@ -63,6 +63,12 @@ export const T = {
   crashChance: 0.14,
   crashSelfClear: 150,
 
+  /** Avenues: 4 lanes on one tile. Cost in road tiles (a new avenue, or upgrading a street costs the difference),
+      speed, and the two lane centers measured from the middle of the road. */
+  avenueCost: 2,
+  avenueSpeed: 14,
+  avenueLanes: [1.7, 4.3] as [number, number],
+
   /** Road colors: cars on one tile at once before it shows as slow (amber) and jammed (red). */
   slowAt: 3,
   jamAt: 5,

@@ -231,7 +231,7 @@ export class City {
   private send(trip: Trip, from: AnyBuilding, to: AnyBuilding, onArrive: () => void): boolean {
     if (from.access < 0 || to.access < 0) return false;
     const route = findRoute(this.grid, from.access, to.access); if (!route) return false;
-    const pts = lanePath(this.grid, [this.grid.idx(from.i, from.j), ...route, this.grid.idx(to.i, to.j)]);
+    const pts = lanePath(this.grid, [this.grid.idx(from.i, from.j), ...route, this.grid.idx(to.i, to.j)], Math.random() < 0.5 ? 1 : 0);
     if (!this.traffic.canStart(pts)) return false;
     const car = this.traffic.add(pts, onArrive); if (!car) return false;
     trip.car = car; this.carTrip.set(car, trip); return true;
@@ -427,10 +427,14 @@ export class City {
   }
 
   /** Floating pins: homes show where their car is going (ring = time left); a "!" means the door faces no road. */
-  drawPins(camera: THREE.Camera): void {
+  drawPins(camera: THREE.Camera, zoom = 1): void {
     const v = new THREE.Vector3();
     const put = (b: AnyBuilding, y: number) => {
-      const { x, z } = this.grid.center(b.i, b.j); v.set(x, y, z).project(camera);
+      // a trip's timer rides on its car while it's driving, so you can follow it through traffic
+      const car = b.kind === 'home' && b.trip?.state === 'out' ? b.trip.car : null;
+      const { x, z } = car ? { x: car.x, z: car.z } : this.grid.center(b.i, b.j);
+      v.set(x, car ? 8 : y, z).project(camera);
+      b.pin.classList.toggle('riding', !!car);
       b.pin.style.left = ((v.x + 1) / 2) * innerWidth + 'px'; b.pin.style.top = ((1 - v.y) / 2) * innerHeight + 'px';
       return Math.abs(v.x) < 1.1 && Math.abs(v.y) < 1.1;
     };
@@ -448,7 +452,9 @@ export class City {
       const [i, j] = this.grid.ij(cr.tile), { x, z } = this.grid.center(i, j); v.set(x, 9, z).project(camera);
       cr.pin.style.left = ((v.x + 1) / 2) * innerWidth + 'px'; cr.pin.style.top = ((1 - v.y) / 2) * innerHeight + 'px';
     }
+    const compact = zoom < 1.3;   // zoomed out: shop names shrink to colored dots
     for (const s of this.shops) {
+      s.pin.classList.toggle('compact', compact);
       if (!put(s, 13)) { s.pin.style.display = 'none'; continue; }
       s.pin.style.display = 'block'; s.pin.classList.toggle('stuck', s.access < 0);
     }
@@ -461,7 +467,7 @@ export class City {
     for (let c = 0; c < g.road.length; c++) if (g.road[c]) roads.push(c);
     return {
       v: 1, clock: this.clock, nextGrow: this.nextGrow, nextShop: this.nextShop, shopsDealt: this.shopsDealt,
-      stats: { ...this.stats }, hand: [...this.hand], roads, goal: this.goal, week: this.week, tokens: this.tokens, patience: this.patience,
+      stats: { ...this.stats }, hand: [...this.hand], roads, avenues: roads.filter((c) => g.road[c] === 2), goal: this.goal, week: this.week, tokens: this.tokens, patience: this.patience,
       junctions: roads.filter((c) => g.junction[c]).map((c) => [c, g.junction[c], g.jspent[c]] as [number, number, number]),
       buildings: [...this.homes, ...this.shops].map((b) => ({ kind: b.kind, i: b.i, j: b.j, face: b.face, turned: b.turned, wants: b.kind === 'home' ? b.wants : undefined, type: b.kind === 'shop' ? b.type : undefined })),
     };
@@ -470,6 +476,7 @@ export class City {
   load(d: SaveData): void {
     const g = this.grid;
     for (const c of d.roads) { g.road[c] = 1; this.clearTree(c); }
+    for (const c of d.avenues ?? []) g.road[c] = 2;
     for (const [c, k, spent] of d.junctions ?? []) { g.junction[c] = k; g.jspent[c] = spent ?? 0; }
     if (d.goal) this.goal = d.goal; if (d.week) this.week = d.week; if (d.tokens) this.tokens = d.tokens; this.patience = d.patience ?? 0;
     for (const b of d.buildings) {
@@ -488,7 +495,7 @@ export class City {
 export interface SaveData {
   v: 1;
   clock: number; nextGrow: number; nextShop: number; shopsDealt: number;
-  stats: Stats; hand: Piece[]; roads: number[];
+  stats: Stats; hand: Piece[]; roads: number[]; avenues?: number[];
   junctions?: [number, number, number?][];
   goal?: Goal; week?: { arrived: number; failed: number; crashes: number }; tokens?: { lights: number; round: number }; patience?: number;
   buildings: { kind: 'home' | 'shop'; i: number; j: number; face: number; turned: boolean; wants?: ShopType; type?: ShopType }[];

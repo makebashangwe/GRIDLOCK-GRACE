@@ -2,7 +2,7 @@
 
 A cozy isometric city-builder in the browser: a traffic puzzle (draw roads, watch cars find their way) that grows into a living city you run as mayor. Built with three.js and TypeScript.
 
-**Status:** v0.1 (the road puzzle) playable. You build from a blank map: homes and shops arrive in your hand and you choose where each goes (each home wants a shop; closer is better), turn buildings so their doors face a road, and draw roads from a daily tile budget. Cars route and queue. Weekday rush hours, day and night. Crossings can get a stop sign, traffic light or roundabout; uncontrolled busy crossings have crashes that Hook & Haul's tow truck clears. Each week has a goal and ends with a pick-one upgrade. Gridlock offers to keep building in Sandbox, and the town autosaves.
+**Status:** v0.1 done; v0.2 (small city) in progress: avenues are in. You build from a blank map: homes and shops arrive in your hand and you choose where each goes (each home wants a shop; closer is better), turn buildings so their doors face a road, and draw roads from a daily tile budget. Cars route and queue. Weekday rush hours, day and night. Crossings can get a stop sign, traffic light or roundabout; uncontrolled busy crossings have crashes that Hook & Haul's tow truck clears. Each week has a goal and ends with a pick-one upgrade. Gridlock offers to keep building in Sandbox, and the town autosaves.
 
 ## Run it
 
