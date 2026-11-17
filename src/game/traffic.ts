@@ -35,6 +35,8 @@ export interface Car {
   /** Drives straight through traffic (the tow truck on a call). Delivery trucks queue like everyone else. */
   ghost?: boolean;
   jitter: number;
+  /** The tile it was on last frame (for road wear). */
+  tile: number;
 }
 
 /** Which direction has green at traffic lights: 0 = east-west, 1 = north-south. */
@@ -87,7 +89,7 @@ export class Traffic {
     const lens: number[] = [], cum: number[] = []; let total = 0;
     for (let k = 0; k < pts.length - 1; k++) { const l = Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].z - pts[k].z); lens.push(l); total += l; cum.push(total); }
     const id = this.nextId++;
-    const car: Car = { id, pts, lens, cum, total, s: 0, seg: 0, v: 0, x: pts[0].x, z: pts[0].z, hx: 1, hz: 0, paint: id % PAINTS.length, onArrive, stoppedFor: -1, wait: 0, crashed: false, jitter: 0 };
+    const car: Car = { id, pts, lens, cum, total, s: 0, seg: 0, v: 0, x: pts[0].x, z: pts[0].z, hx: 1, hz: 0, paint: id % PAINTS.length, onArrive, stoppedFor: -1, wait: 0, crashed: false, jitter: 0, tile: -1 };
     this.place(car); this.cars.push(car); return car;
   }
 
@@ -147,7 +149,11 @@ export class Traffic {
     this.hash.clear(); g.load.fill(0);
     for (const c of this.cars) {
       const k = this.key(c.x, c.z); let l = this.hash.get(k); if (!l) this.hash.set(k, (l = [])); l.push(c);
-      const [i, j] = g.tileAt(c.x, c.z); if (g.inside(i, j)) g.load[g.idx(i, j)]++;
+      const [i, j] = g.tileAt(c.x, c.z);
+      if (g.inside(i, j)) {
+        const t = g.idx(i, j); g.load[t]++;
+        if (t !== c.tile) { c.tile = t; if (g.road[t] && !c.ghost) g.wear[t] += c.special ? 3 : 1; }   // each pass wears the road a little
+      }
     }
     const arrived: Car[] = [];
     this.time += dt;
@@ -168,7 +174,8 @@ export class Traffic {
       if (!blocked && !c.ghost && this.holdAtCrossing(c, clock, dt)) blocked = true;
       const [ti, tj] = g.tileAt(c.x, c.z), inRound = g.inside(ti, tj) && g.control(g.idx(ti, tj)) === J_ROUND;
       const onAvenue = g.inside(ti, tj) && g.isAvenue(g.idx(ti, tj));
-      const top = c.special && !c.ghost ? T.truckSpeed : onAvenue && !c.special ? T.avenueSpeed : T.carSpeed;
+      const onHole = g.inside(ti, tj) && g.pothole[g.idx(ti, tj)] === 1;
+      const top = onHole && !c.ghost ? T.potholeSpeed : c.special && !c.ghost ? T.truckSpeed : onAvenue && !c.special ? T.avenueSpeed : T.carSpeed;
       const want = blocked ? 0 : inRound ? T.roundSpeed : top;
       c.v += Math.max(-T.carAccel * 2.5 * dt, Math.min(T.carAccel * dt, want - c.v));
       c.s += c.v * dt;

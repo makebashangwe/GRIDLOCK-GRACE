@@ -51,7 +51,8 @@ setInterval(saveNow, 5000);
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
 window.addEventListener('pagehide', saveNow);
 const junctions = new JunctionView(scene, grid);
-roads.rebuild(); junctions.sync();
+roads.rebuild(); junctions.sync(); roads.syncPotholes(scene);
+city.onHoles = () => roads.syncPotholes(scene);
 cam.target.set(0, 0, 0); cam.zoom = cam.goalZoom = 1.15;
 
 /* ---------- drawing roads ---------- */
@@ -117,7 +118,7 @@ function apply(i: number, j: number): boolean {
     if (!grid.road[c]) return false;
     if (c === grid.entry) { toast('That road is the highway connection: delivery trucks come in there', 'bad'); return false; }
     if (grid.water[c]) city.stats.bridges++; else city.stats.roadTiles += grid.road[c];
-    city.stats.roadTiles += grid.jspent[c]; grid.junction[c] = J_NONE; grid.jspent[c] = 0; grid.road[c] = 0;
+    city.stats.roadTiles += grid.jspent[c]; grid.junction[c] = J_NONE; grid.wear[c] = 0; grid.jspent[c] = 0; grid.road[c] = 0;
     return true;
   }
   return false;

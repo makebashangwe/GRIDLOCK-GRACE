@@ -70,6 +70,12 @@ export const T = {
   restockAt: 40,
   truckSpeed: 9,
 
+  /** Road wear: a tile cracks into a pothole after this many car passes (trucks count 3). Cars crawl over
+      potholes. A connected City Depot sends a crew that patches one in fixTime game minutes. */
+  potholeAt: 220,
+  potholeSpeed: 4,
+  fixTime: 30,
+
   /** Bridge pieces to start with (a crossing of the 2-wide river takes 2). More come from Sunday picks. */
   startBridges: 4,
 

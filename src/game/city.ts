@@ -19,6 +19,8 @@ const building = M.building as unknown as (spec: Record<string, unknown>) => THR
 const tryDispatchNow = (t: number) => t <= 0;
 /** Shops that sell things (and so need deliveries). */
 const stocked = (t: ShopType) => t !== 'tow' && t !== 'depot';
+/** Service buildings: no customers, no home demand. */
+const service = (t: ShopType) => t === 'tow' || t === 'depot';
 const FACE_ROT = [Math.PI / 2, 0, -Math.PI / 2, Math.PI];
 
 interface Building extends Placed {
@@ -132,6 +134,7 @@ export class City {
     this.clearTree(c);
     const info = SHOP_INFO[type];
     const obj = shadowAll(type === 'tow' ? (M.makeHookAndHaulTowShop() as THREE.Object3D)
+      : type === 'depot' ? building({ w: 11, d: 9, h: 6.5, wall: '#F6E7CF', roof: info.color, sign: { text: info.sign, color: info.ink }, roofType: 'flat', bays: 2 })
       : building({ w: 10.5, d: 9, h: 7, wall: '#FFF4E2', roof: info.color, awning: info.color, sign: { text: info.sign, color: info.ink }, roofType: 'flat' }));
     const shop: Shop = { id: this.nextId++, kind: 'shop', type, i, j, obj, face: this.roadSide(i, j), access: -1, turned: false, pin: this.pin('pin shop'), served: 0, stock: T.stockMax, truck: null, warned: false };
     shop.pin.style.setProperty('--c', info.color);
@@ -217,14 +220,14 @@ export class City {
 
   /* ---------------- new pieces ---------------- */
   /** How many homes the shops can support. */
-  private capacity(): number { const n = this.shops.filter((s) => s.type !== 'tow').length; return n ? T.homesFirstShop + (n - 1) * T.homesPerShop : 0; }
+  private capacity(): number { const n = this.shops.filter((s) => !service(s.type)).length; return n ? T.homesFirstShop + (n - 1) * T.homesPerShop : 0; }
 
   /** Deal a new home into the hand when the shops have room for more people. */
   private deal(): void {
     const inHand = this.hand.filter((p) => p.kind === 'home').length;
     this.stats.demand = Math.max(0, this.capacity() - this.homes.length - inHand);
     if (this.stats.demand <= 0 || this.hand.length >= T.handMax) return;
-    const types = [...new Set(this.shops.map((s) => s.type))].filter((t) => t !== 'tow');
+    const types = [...new Set(this.shops.map((s) => s.type))].filter((t) => !service(t));
     if (!types.length) return;
     const wants = types[Math.floor(Math.random() * types.length)];
     this.hand.push({ kind: 'home', wants });
@@ -347,6 +350,56 @@ export class City {
     }
   }
 
+  /* ---------------- potholes and the city depot ---------------- */
+  /** Potholes in the road: crew truck on its way, or the crew working (fixAt). */
+  holes = new Map<number, { crew: Car | null; fixAt: number; site: THREE.Object3D | null; depot?: Shop }>();
+  /** Called when potholes appear or are patched, so the road props can redraw. */
+  onHoles: () => void = () => {};
+
+  private updatePotholes(): void {
+    const g = this.grid;
+    for (let c = 0; c < g.wear.length; c++) {
+      if (g.wear[c] < T.potholeAt || !g.road[c] || g.water[c] || g.pothole[c]) continue;
+      g.wear[c] = 0; g.pothole[c] = 1; this.holes.set(c, { crew: null, fixAt: -1, site: null }); this.onHoles();
+      const hasDepot = this.shops.some((s) => s.type === 'depot') || this.hand.some((p) => p.kind === 'shop' && p.type === 'depot');
+      if (!hasDepot) { this.hand.unshift({ kind: 'shop', type: 'depot' }); this.onChange(); this.onEvent('A pothole! The City Depot wants to open: place it and its crew will patch roads', 'bad'); }
+    }
+    for (const [c, h] of this.holes) {
+      if (!g.road[c]) { this.patch(c); continue; }   // the road was erased
+      if (h.fixAt >= 0) { if (this.clock >= h.fixAt) this.patch(c, true); continue; }
+      if (h.crew) continue;
+      for (const depot of this.shops) {
+        if (depot.type !== 'depot' || depot.access < 0) continue;
+        const route = findRoute(g, depot.access, c); if (!route) continue;
+        const pts = lanePath(g, [g.idx(depot.i, depot.j), ...route, route[route.length - 1]]); pts.pop();
+        const truck = M.makeDeliveryTruck('#F4B860') as THREE.Object3D; shadowAll(truck); truck.scale.setScalar(0.85);
+        h.crew = this.traffic.addSpecial(pts, truck, () => {
+          h.crew = null; h.fixAt = this.clock + T.fixTime;
+          // the crew parks beside the hole with cones while they work
+          const site = new THREE.Group(), [i, j] = g.ij(c), { x, z } = g.center(i, j);
+          const parked = M.makeDeliveryTruck('#F4B860') as THREE.Object3D; parked.scale.setScalar(0.85); parked.position.set(-3.2, 0, -3.6); site.add(parked);
+          for (const [cx, cz] of [[2.6, -1.2], [2.6, 1.6], [-0.4, 2.4]]) { const cone = M.makeTrafficCone() as THREE.Object3D; cone.scale.setScalar(1.5); cone.position.set(cx, 0, cz); site.add(cone); }
+          site.position.set(x, 0.05, z); shadowAll(site); this.scene.add(site); h.site = site; h.depot = depot;
+        }, false);
+        break;
+      }
+    }
+  }
+  private patch(c: number, fixed = false): void {
+    const h = this.holes.get(c); if (!h) return;
+    if (h.crew) this.traffic.remove(h.crew);
+    if (h.site) this.scene.remove(h.site);
+    this.holes.delete(c); this.grid.pothole[c] = 0; this.grid.wear[c] = 0; this.onHoles();
+    if (!fixed) return;
+    this.onEvent('The depot crew patched a pothole', 'good');
+    const depot = h.depot, g = this.grid;   // the crew drives back to the depot
+    const back = depot && depot.access >= 0 && this.shops.includes(depot) ? findRoute(g, c, depot.access) : null;
+    if (depot && back) {
+      const t = M.makeDeliveryTruck('#F4B860') as THREE.Object3D; shadowAll(t); t.scale.setScalar(0.85);
+      this.traffic.addSpecial(lanePath(g, [...back, g.idx(depot.i, depot.j)]), t, () => {}, false);
+    }
+  }
+
   /* ---------------- crashes and towing ---------------- */
   private crash(a: Car, b: Car, tile: number): void {
     this.stats.crashes++; this.week.crashes++;
@@ -424,10 +477,10 @@ export class City {
     }
     this.stats.demand = Math.max(0, this.capacity() - this.homes.length - this.hand.filter((p) => p.kind === 'home').length);
 
-    const types = [...new Set(this.shops.map((s) => s.type))].filter((t) => t !== 'tow');
+    const types = [...new Set(this.shops.map((s) => s.type))].filter((t) => !service(t));
     this.dispatchT -= realDt;
     this.updateCrashes(tryDispatchNow(this.dispatchT));
-    if (tryDispatchNow(this.dispatchT)) this.updateDeliveries();
+    if (tryDispatchNow(this.dispatchT)) { this.updateDeliveries(); this.updatePotholes(); }
     const tryDispatch = this.dispatchT <= 0; if (tryDispatch) this.dispatchT = 0.4;
     for (const h of this.homes) {
       if (!h.trip && this.clock >= h.nextTrip && types.length && Math.random() < gm * rate) {
@@ -509,7 +562,7 @@ export class City {
     for (let c = 0; c < g.road.length; c++) if (g.road[c]) roads.push(c);
     return {
       v: 1, clock: this.clock, nextGrow: this.nextGrow, nextShop: this.nextShop, shopsDealt: this.shopsDealt,
-      stats: { ...this.stats }, hand: [...this.hand], roads, water: [...g.water.keys()].filter((c) => g.water[c]), avenues: roads.filter((c) => g.road[c] === 2), goal: this.goal, week: this.week, tokens: this.tokens, patience: this.patience,
+      stats: { ...this.stats }, hand: [...this.hand], roads, potholes: roads.filter((c) => g.pothole[c]), water: [...g.water.keys()].filter((c) => g.water[c]), avenues: roads.filter((c) => g.road[c] === 2), goal: this.goal, week: this.week, tokens: this.tokens, patience: this.patience,
       junctions: roads.filter((c) => g.junction[c]).map((c) => [c, g.junction[c], g.jspent[c]] as [number, number, number]),
       buildings: [...this.homes, ...this.shops].map((b) => ({ kind: b.kind, i: b.i, j: b.j, face: b.face, turned: b.turned, wants: b.kind === 'home' ? b.wants : undefined, type: b.kind === 'shop' ? b.type : undefined, stock: b.kind === 'shop' ? b.stock : undefined })),
     };
@@ -520,6 +573,7 @@ export class City {
     if (d.water) { g.water.fill(0); for (const c of d.water) { g.water[c] = 1; this.clearTree(c); } }
     for (const c of d.roads) { g.road[c] = 1; this.clearTree(c); }
     for (const c of d.avenues ?? []) g.road[c] = 2;
+    for (const c of d.potholes ?? []) { g.pothole[c] = 1; this.holes.set(c, { crew: null, fixAt: -1, site: null }); }
     for (const [c, k, spent] of d.junctions ?? []) { g.junction[c] = k; g.jspent[c] = spent ?? 0; }
     if (d.goal) this.goal = d.goal; if (d.week) this.week = d.week; if (d.tokens) this.tokens = d.tokens; this.patience = d.patience ?? 0;
     for (const b of d.buildings) {
@@ -539,7 +593,7 @@ export class City {
 export interface SaveData {
   v: 1;
   clock: number; nextGrow: number; nextShop: number; shopsDealt: number;
-  stats: Stats; hand: Piece[]; roads: number[]; avenues?: number[]; water?: number[];
+  stats: Stats; hand: Piece[]; roads: number[]; avenues?: number[]; water?: number[]; potholes?: number[];
   junctions?: [number, number, number?][];
   goal?: Goal; week?: { arrived: number; failed: number; crashes: number }; tokens?: { lights: number; round: number }; patience?: number;
   buildings: { kind: 'home' | 'shop'; i: number; j: number; face: number; turned: boolean; wants?: ShopType; type?: ShopType; stock?: number }[];

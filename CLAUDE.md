@@ -19,6 +19,10 @@ Gridlock & Grace: cozy isometric city-builder. Traffic puzzle first (v0.1), then
 - The simulation runs on the main thread in small fixed steps for now; the design calls for a Web Worker once the city gets big.
 - Phone results (Nov 17): 4,000 cars + 6,000 people at 60 fps on Keba's phone in the performance check.
 
+## Map rules
+- Use `grid.connects(i, j, d)` for any road-to-road check: it applies the water rule (bridges only connect east-west).
+- `grid.entry` (west edge, middle) is the highway connection: always road, can't be erased; delivery trucks enter there.
+
 ## Still to port from the Asset Test
 - Meshy GLB fixes: zero-length normal repair, texture recolor (police station navy to teal, house roof variants), texture shrinking.
 - Crowd system (`makeCrowd` / `citizenLook`), weather (rain and snow with the height snapshot), crash scene, ghost road, city depot.

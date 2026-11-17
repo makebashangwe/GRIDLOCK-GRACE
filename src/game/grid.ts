@@ -29,6 +29,9 @@ export class Grid {
   readonly water: Uint8Array;
   /** The highway connection on the west edge: a road tile that can't be erased. Delivery trucks come in here. */
   readonly entry: number;
+  /** Wear from traffic per tile, and potholes (1 = pothole). */
+  readonly wear: Float32Array;
+  readonly pothole: Uint8Array;
   /** Road tiles actually spent on each crossing's control (free upgrade tokens spend none). */
   readonly jspent: Uint8Array;
 
@@ -41,6 +44,8 @@ export class Grid {
     this.junction = new Uint8Array(size);
     this.water = new Uint8Array(size);
     this.entry = this.idx(0, Math.floor(this.n / 2));
+    this.wear = new Float32Array(size);
+    this.pothole = new Uint8Array(size);
     this.jspent = new Uint8Array(size);
   }
 

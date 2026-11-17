@@ -2,7 +2,8 @@
    crosswalks at junctions. All pieces are instanced; the whole road network is a handful of draw calls.
    Jammed tiles tint amber (slow) and red (jammed). */
 import * as THREE from 'three';
-import { C, mat } from '../assets/core';
+import { C, mat, shadowAll } from '../assets/core';
+import { makePothole } from '../assets/models';
 import { Grid, DX, DZ } from './grid';
 import { T } from './tuning';
 
@@ -109,6 +110,18 @@ export class RoadView {
     this.asphalt.count = a; this.walks.count = w; this.corners.count = c; this.dashes.count = d; this.stripes.count = s; this.solids.count = so; this.deck.count = dk; this.rails.count = rl; this.posts.count = ps; this.piers.count = pr;
     for (const im of [this.asphalt, this.walks, this.corners, this.dashes, this.stripes, this.solids, this.deck, this.rails, this.posts, this.piers]) im.instanceMatrix.needsUpdate = true;
     this.paintLoad();
+  }
+
+  private holes = new Map<number, THREE.Object3D>();
+  /** Show a pothole on each tile that has one. */
+  syncPotholes(scene: THREE.Scene): void {
+    const g = this.grid;
+    for (const [c, o] of this.holes) if (!g.pothole[c]) { scene.remove(o); this.holes.delete(c); }
+    for (let c = 0; c < g.pothole.length; c++) {
+      if (!g.pothole[c] || this.holes.has(c)) continue;
+      const [i, j] = g.ij(c), { x, z } = g.center(i, j), o = makePothole() as THREE.Object3D;
+      o.scale.setScalar(1.6); o.position.set(x + 1.4, 0.06, z - 1.2); o.rotation.y = c; shadowAll(o); scene.add(o); this.holes.set(c, o);
+    }
   }
 
   /** Tint tiles by how many cars are on them. Called a few times a second. */
