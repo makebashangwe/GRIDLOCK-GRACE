@@ -31,7 +31,7 @@ roads.rebuild();
 cam.target.set(0, 0, 0); cam.zoom = cam.goalZoom = 1.15;
 
 /* ---------- drawing roads ---------- */
-type Tool = 'road' | 'erase' | 'move' | 'rotate';
+type Tool = 'road' | 'place' | 'turn' | 'erase' | 'move' | 'rotate';
 let tool: Tool = 'road';
 const ghostMat = new THREE.MeshBasicMaterial({ color: '#4E8FA6', transparent: true, opacity: 0.4, depthWrite: false });
 const ghost = new THREE.Mesh(new THREE.PlaneGeometry(T.tile - 0.6, T.tile - 0.6).rotateX(-Math.PI / 2), ghostMat);
@@ -44,16 +44,21 @@ function tileUnder(e: PointerEvent): [number, number] | null {
   const [i, j] = grid.tileAt(hit.x, hit.z); return grid.inside(i, j) ? [i, j] : null;
 }
 function canPlace(i: number, j: number) { return grid.isFree(i, j) && city.stats.roadTiles > 0; }
+/** One tile of a drag: roads go down, erase removes a building (back to the hand) or a road. */
 function apply(i: number, j: number): boolean {
   const c = grid.idx(i, j);
   if (tool === 'road') {
     if (!canPlace(i, j)) return false;
     city.clearTree(c); grid.road[c] = 1; city.stats.roadTiles--;
-  } else {
+    return true;
+  }
+  if (tool === 'erase') {
+    if (grid.building[c]) { city.remove(i, j); return true; }
     if (!grid.road[c]) return false;
     grid.road[c] = 0; city.stats.roadTiles++;
+    return true;
   }
-  return true;
+  return false;
 }
 let stroke: [number, number] | null = null;
 function paintTo(to: [number, number]) {
@@ -76,6 +81,8 @@ canvas.addEventListener('pointerdown', (e) => {
   if ((tool === 'move' || tool === 'rotate') && e.button === 0) { toolDrag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); return; }
   if (e.button !== 0 || e.shiftKey || e.altKey || city.stats.over) return;
   const t = tileUnder(e); if (!t) return;
+  if (tool === 'place') { if (city.placeNext(...t)) { drawHand(); if (!city.hand.length) setTool('road'); } return; }
+  if (tool === 'turn') { city.turn(...t); return; }
   canvas.setPointerCapture(e.pointerId); stroke = null; paintTo(t);
 });
 canvas.addEventListener('pointermove', (e) => {
@@ -85,21 +92,51 @@ canvas.addEventListener('pointermove', (e) => {
     toolDrag = { x: e.clientX, y: e.clientY }; return;
   }
   const t = tileUnder(e);
-  if (tool === 'move' || tool === 'rotate') { ghost.visible = false; return; }
   ghost.visible = !!t && !city.stats.over;
-  if (!t) return;
+  if (!t) { hintAt(null, ''); return; }
+  if (tool === 'move' || tool === 'rotate') { ghost.visible = false; return; }
   const { x, z } = grid.center(...t); ghost.position.x = x; ghost.position.z = z;
-  const ok = tool === 'road' ? canPlace(...t) : grid.isRoad(...t);
-  ghostMat.color.set(tool === 'erase' ? '#C8553D' : ok ? '#4E8FA6' : '#C8553D'); ghostMat.opacity = ok ? 0.42 : 0.22;
+  const c = grid.idx(...t);
+  const ok = tool === 'road' ? canPlace(...t) : tool === 'place' ? grid.isFree(...t) && city.hand.length > 0
+    : tool === 'turn' ? !!grid.building[c] : !!grid.building[c] || grid.isRoad(...t);
+  ghostMat.color.set(tool === 'erase' ? '#C8553D' : ok ? (tool === 'place' ? pieceColor() : '#4E8FA6') : '#C8553D'); ghostMat.opacity = ok ? 0.42 : 0.22;
+  hintAt(e, tool === 'place' && ok ? placeHint(...t) : '');
   if (stroke && (e.buttons & 1)) paintTo(t);
 });
 const endStroke = () => { stroke = null; toolDrag = null; };
+canvas.addEventListener('pointerleave', () => hintAt(null, ''));
 canvas.addEventListener('pointerup', endStroke); canvas.addEventListener('pointercancel', endStroke);
 canvas.addEventListener('pointerleave', () => (ghost.visible = false));
 
-function setTool(t: Tool) { tool = t; $('toolRoad').classList.toggle('on', t === 'road'); $('toolErase').classList.toggle('on', t === 'erase'); $('toolMove').classList.toggle('on', t === 'move'); $('toolRotate').classList.toggle('on', t === 'rotate'); }
-$('toolRoad').onclick = () => setTool('road'); $('toolErase').onclick = () => setTool('erase'); $('toolMove').onclick = () => setTool('move'); $('toolRotate').onclick = () => setTool('rotate');
+const TOOLS: [Tool, string][] = [['road', 'toolRoad'], ['place', 'toolPlace'], ['turn', 'toolTurn'], ['erase', 'toolErase'], ['move', 'toolMove'], ['rotate', 'toolRotate']];
+function setTool(t: Tool) { tool = t; for (const [k, id] of TOOLS) $(id).classList.toggle('on', k === t); if (t !== 'place') hintAt(null, ''); }
+for (const [k, id] of TOOLS) $(id).onclick = () => setTool(k);
 $('zoomIn').onclick = () => (cam.goalZoom = Math.min(9, cam.goalZoom * 1.35)); $('zoomOut').onclick = () => (cam.goalZoom = Math.max(0.15, cam.goalZoom / 1.35));
+
+/* ---------- the hand: pieces waiting to be placed ---------- */
+const pieceColor = () => { const p = city.hand[0]; return !p ? '#4E8FA6' : SHOP_INFO[p.kind === 'home' ? p.wants : p.type].color; };
+function placeHint(i: number, j: number): string {
+  const p = city.hand[0]; if (!p) return '';
+  if (p.kind === 'shop') return `Place ${SHOP_INFO[p.type].name} here`;
+  const d = city.distanceTo(p.wants, i, j), name = SHOP_INFO[p.wants].name;
+  if (d < 0) return `Wants ${name} (none placed yet)`;
+  return `${d} tile${d === 1 ? '' : 's'} from ${name}` + (d <= 4 ? ' · great spot' : d <= 8 ? ' · okay' : ' · far');
+}
+function hintAt(e: PointerEvent | null, text: string) {
+  const el = $('hint'); el.style.display = text ? 'block' : 'none'; if (!text || !e) return;
+  el.textContent = text; el.style.left = e.clientX + 16 + 'px'; el.style.top = e.clientY - 34 + 'px';
+}
+function drawHand() {
+  const h = city.hand;
+  $('handList').innerHTML = h.length ? h.map((p, k) => {
+    const color = SHOP_INFO[p.kind === 'home' ? p.wants : p.type].color;
+    const label = p.kind === 'home' ? `Home · wants ${SHOP_INFO[p.wants].name}` : SHOP_INFO[p.type].name;
+    return `<div class="piece${k === 0 ? ' next' : ''}"><i class="${p.kind}" style="--c:${color}"></i><span>${k === 0 ? '<b>Next:</b> ' : ''}${label}</span></div>`;
+  }).join('') : '<div class="empty">Nothing to place right now. Build roads; more homes come when your shops have room.</div>';
+  ($('toolPlace') as HTMLButtonElement).disabled = !h.length;
+}
+city.onChange = drawHand;
+drawHand();
 
 /* ---------- speed ---------- */
 let speed = 1;
@@ -107,6 +144,8 @@ function setSpeed(s: number) { speed = s; document.querySelectorAll<HTMLElement>
 document.querySelectorAll<HTMLElement>('[data-speed]').forEach((b) => (b.onclick = () => setSpeed(Number(b.dataset.speed))));
 window.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') setTool('road');
+  if (e.key === 'p' || e.key === 'P') setTool('place');
+  if (e.key === 't' || e.key === 'T') setTool('turn');
   if (e.key === 'x' || e.key === 'X') setTool('erase');
   if (e.key === 'm' || e.key === 'M') setTool('move');
   if (e.key === 'o' || e.key === 'O') setTool('rotate');
@@ -129,7 +168,8 @@ function hud() {
   $('arrived').textContent = String(s.arrived);
   $('failed').textContent = `${s.failed} / ${T.failLimit}`;
   ($('failbar') as HTMLElement).style.width = `${(s.failed / T.failLimit) * 100}%`;
-  $('homes').textContent = `${s.homes} homes · ${s.shops} shops · ${traffic.cars.length} cars`;
+  $('homes').textContent = `${s.homes} homes · ${s.shops} shops · ${traffic.cars.length} cars · room for ${s.demand} more`;
+  drawHand();
 }
 function gameOver() {
   const s = city.stats;
@@ -148,11 +188,12 @@ function loop(now: number) {
   }
   paintT -= real; if (paintT <= 0) { roads.paintLoad(); paintT = 0.4; }
   hudT -= real; if (hudT <= 0) { hud(); hudT = 0.2; }
+  city.animate(real);
   runTicks(now / 1000);
   stage.render();
   city.drawPins(camera);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
-setTool('road'); setSpeed(1);
-(window as unknown as { __game: unknown }).__game = { city, grid, traffic, cam, roads, paint: (i: number, j: number) => { apply(i, j); roads.rebuild(); city.roadsChanged(); } };
+setTool('place'); setSpeed(1);
+(window as unknown as { __game: unknown }).__game = { city, grid, traffic, cam, roads, paint: (i: number, j: number) => { const was = tool; tool = 'road'; apply(i, j); tool = was; roads.rebuild(); city.roadsChanged(); } };

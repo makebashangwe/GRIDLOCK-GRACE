@@ -28,10 +28,17 @@ export const T = {
   /** Game minutes a car spends at the shop before heading home. */
   shopVisit: 10,
 
-  /** City growth. */
-  startHomes: 3,
-  newHomeEvery: 42,
-  newShopEvery: 300,
+  /** City growth: homes arrive in the hand while the shops have room for them. */
+  homesFirstShop: 6,
+  homesPerShop: 5,
+  /** Game minutes between new homes being dealt (while there's demand). */
+  growEvery: 35,
+  /** Game minutes between new shops being dealt. */
+  newShopEvery: 330,
+  /** Most pieces the hand holds at once. */
+  handMax: 6,
+  /** Share of a home's trips that go to the shop it wants (the rest go anywhere). */
+  wantShare: 0.75,
   /** The run ends at this many failed trips. */
   failLimit: 12,
 

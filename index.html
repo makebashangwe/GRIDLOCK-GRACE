@@ -23,6 +23,17 @@
     button { border: 0; border-radius: 12px; padding: 8px 13px; font: inherit; font-size: 14px; font-weight: 900; cursor: pointer; background: #F4EFE6; color: var(--ink); }
     button.on { background: #F2CC8F; }
     #tools button { padding: 10px 16px; }
+    #hand { right: 16px; top: 84px; width: 230px; font-size: 13px; }
+    #hand .title { font-size: 11px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; opacity: .55; margin-bottom: 6px; }
+    .piece { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 10px; opacity: .6; font-weight: 700; }
+    .piece.next { opacity: 1; background: #F7EEDF; }
+    .piece i { flex: none; width: 18px; height: 18px; background: var(--c); }
+    .piece i.home { clip-path: polygon(50% 0, 100% 45%, 100% 100%, 0 100%, 0 45%); }
+    .piece i.shop { border-radius: 5px; box-shadow: inset 0 5px 0 #FFFBF4, inset 0 7px 0 var(--c); }
+    #hand .empty { font-size: 12px; opacity: .65; line-height: 1.45; }
+    #hint { position: fixed; display: none; pointer-events: none; z-index: 5; background: #3F3A4A; color: #F6E7CF; font-weight: 800; font-size: 12.5px; padding: 5px 10px; border-radius: 999px; white-space: nowrap; }
+    .sep { width: 1px; background: #E6DACA; margin: 4px 2px; }
+    button:disabled { opacity: .4; cursor: default; }
     #legend { right: 16px; bottom: 18px; font-size: 12.5px; font-weight: 800; display: flex; flex-direction: column; gap: 4px; }
     #legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 7px; vertical-align: -1px; }
     #help { left: 16px; bottom: 18px; font-size: 12px; line-height: 1.5; max-width: 250px; }
@@ -45,7 +56,7 @@
     #over h2 { margin: 0 0 8px; font-size: 24px; font-weight: 900; }
     #over p { margin: 0 0 16px; line-height: 1.5; }
     #over button { background: #E07A5F; color: #FFF8EE; padding: 11px 20px; }
-    @media (max-width: 700px) { #help, #legend { display: none; } #top { width: 230px; } }
+    @media (max-width: 700px) { #help, #legend { display: none; } #top { width: 210px; } #hand { width: 180px; } #tools { flex-wrap: wrap; justify-content: center; width: 92vw; } }
   </style>
 </head>
 <body>
@@ -68,17 +79,22 @@
     <button data-speed="1">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button>
   </div>
   <div class="card" id="tools">
-    <button id="toolRoad" title="R">Draw road</button>
+    <button id="toolPlace" title="P">Place</button>
+    <button id="toolRoad" title="R">Road</button>
+    <button id="toolTurn" title="T">Turn</button>
     <button id="toolErase" title="X">Erase</button>
+    <span class="sep"></span>
     <button id="toolMove" title="M">Move</button>
-    <button id="toolRotate" title="O">Rotate</button>
+    <button id="toolRotate" title="O">Orbit</button>
     <button id="zoomOut" title="Zoom out">−</button><button id="zoomIn" title="Zoom in">+</button>
   </div>
   <div class="card" id="help">
-    <b>Connect every home to the shops.</b> Drag to draw roads. Pins show where each car is going; the ring is time left.
+    <b>Build your town.</b> Place each home and shop from your hand, then connect them with roads. Doors must face a road (Turn rotates a building). Homes want a shop: put them close to it. Erase picks a building back up.
     Right-drag or Option-drag to orbit · Shift-drag or arrow keys to pan · scroll to zoom · Q/E snap 90° · <a href="./gallery.html">asset gallery</a>
   </div>
   <div class="card" id="legend"></div>
+  <div class="card" id="hand"><div class="title">Your hand</div><div id="handList"></div></div>
+  <div id="hint"></div>
   <div id="over"><div class="card"><h2>Gridlock!</h2><p id="overStats"></p><button id="again">Play again</button></div></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
