@@ -6,6 +6,8 @@ import { runTicks } from './engine/tick';
 import { C } from './assets/core';
 import { Grid } from './game/grid';
 import { RoadView } from './game/roadView';
+import { JunctionView } from './game/junctions';
+import { J_NONE, J_STOP, J_LIGHT, J_ROUND } from './game/grid';
 import { Traffic } from './game/traffic';
 import { City, type SaveData } from './game/city';
 import { T, SHOP_INFO, SHOP_ORDER } from './game/tuning';
@@ -34,11 +36,12 @@ const saveNow = () => { try { if (!city.stats.over) localStorage.setItem(SAVE_KE
 setInterval(saveNow, 5000);
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
 window.addEventListener('pagehide', saveNow);
-roads.rebuild();
+const junctions = new JunctionView(scene, grid);
+roads.rebuild(); junctions.sync();
 cam.target.set(0, 0, 0); cam.zoom = cam.goalZoom = 1.15;
 
 /* ---------- drawing roads ---------- */
-type Tool = 'road' | 'place' | 'turn' | 'erase' | 'move' | 'rotate';
+type Tool = 'road' | 'place' | 'turn' | 'junction' | 'erase' | 'move' | 'rotate';
 let tool: Tool = 'road';
 const ghostMat = new THREE.MeshBasicMaterial({ color: '#4E8FA6', transparent: true, opacity: 0.4, depthWrite: false });
 const ghost = new THREE.Mesh(new THREE.PlaneGeometry(T.tile - 0.6, T.tile - 0.6).rotateX(-Math.PI / 2), ghostMat);
@@ -51,6 +54,25 @@ function tileUnder(e: PointerEvent): [number, number] | null {
   const [i, j] = grid.tileAt(hit.x, hit.z); return grid.inside(i, j) ? [i, j] : null;
 }
 function canPlace(i: number, j: number) { return grid.isFree(i, j) && city.stats.roadTiles > 0; }
+/* ---------- crossings: stop sign -> traffic light -> roundabout -> nothing ---------- */
+const J_INFO: Record<number, { name: string; note: string }> = {
+  [J_NONE]: { name: 'No control', note: 'fast, but busy crossings get messy' },
+  [J_STOP]: { name: 'Stop sign', note: 'free · every car stops, then goes' },
+  [J_LIGHT]: { name: 'Traffic light', note: `${T.lightCost} road tiles · directions take turns` },
+  [J_ROUND]: { name: 'Roundabout', note: `${T.roundCost} road tiles · keeps traffic flowing` },
+};
+const junctionCost = (k: number) => (k === J_LIGHT ? T.lightCost : k === J_ROUND ? T.roundCost : 0);
+const nextJunction = (k: number) => (k + 1) % 4;
+function cycleJunction(i: number, j: number): void {
+  const c = grid.idx(i, j);
+  if (!grid.isCrossing(c)) { toast('Crossings are where 3 or 4 roads meet', 'bad'); return; }
+  const from = grid.junction[c], to = nextJunction(from), delta = junctionCost(to) - junctionCost(from);
+  if (delta > city.stats.roadTiles) { toast(`${J_INFO[to].name} needs ${junctionCost(to)} road tiles`, 'bad'); return; }
+  city.stats.roadTiles -= delta; grid.junction[c] = to;
+  roads.rebuild(); junctions.sync(); city.roadsChanged();
+  toast(`${J_INFO[to].name}`, 'good');
+}
+
 /** One tile of a drag: roads go down, erase removes a building (back to the hand) or a road. */
 function apply(i: number, j: number): boolean {
   const c = grid.idx(i, j);
@@ -63,7 +85,7 @@ function apply(i: number, j: number): boolean {
   if (tool === 'erase') {
     if (grid.building[c]) { city.remove(i, j); return true; }
     if (!grid.road[c]) return false;
-    grid.road[c] = 0; city.stats.roadTiles++;
+    city.stats.roadTiles += 1 + junctionCost(grid.junction[c]); grid.junction[c] = J_NONE; grid.road[c] = 0;
     return true;
   }
   return false;
@@ -80,7 +102,7 @@ function paintTo(to: [number, number]) {
       stroke = [i, j];
     }
   }
-  if (changed) { roads.rebuild(); city.roadsChanged(); }
+  if (changed) { roads.rebuild(); junctions.sync(); city.roadsChanged(); }
 }
 const canvas = stage.renderer.domElement;
 // Move and Rotate tools: one-finger / left-drag pans or orbits (for phones and trackpads)
@@ -91,6 +113,7 @@ canvas.addEventListener('pointerdown', (e) => {
   const t = tileUnder(e); if (!t) return;
   if (tool === 'place') { if (city.placeNext(...t)) { drawHand(); if (!city.hand.length) setTool('road'); } return; }
   if (tool === 'turn') { city.turn(...t); return; }
+  if (tool === 'junction') { cycleJunction(...t); return; }
   canvas.setPointerCapture(e.pointerId); stroke = null; paintTo(t);
 });
 canvas.addEventListener('pointermove', (e) => {
@@ -106,9 +129,9 @@ canvas.addEventListener('pointermove', (e) => {
   const { x, z } = grid.center(...t); ghost.position.x = x; ghost.position.z = z;
   const c = grid.idx(...t);
   const ok = tool === 'road' ? canPlace(...t) : tool === 'place' ? grid.isFree(...t) && city.hand.length > 0
-    : tool === 'turn' ? !!grid.building[c] : !!grid.building[c] || grid.isRoad(...t);
+    : tool === 'turn' ? !!grid.building[c] : tool === 'junction' ? grid.isCrossing(c) : !!grid.building[c] || grid.isRoad(...t);
   ghostMat.color.set(tool === 'erase' ? '#C8553D' : ok ? (tool === 'place' ? pieceColor() : '#4E8FA6') : '#C8553D'); ghostMat.opacity = ok ? 0.42 : 0.22;
-  hintAt(e, tool === 'place' && ok ? placeHint(...t) : '');
+  hintAt(e, tool === 'place' && ok ? placeHint(...t) : tool === 'junction' && ok ? `Next: ${J_INFO[nextJunction(grid.junction[c])].name} · ${J_INFO[nextJunction(grid.junction[c])].note}` : '');
   if (stroke && (e.buttons & 1)) paintTo(t);
 });
 const endStroke = () => { stroke = null; toolDrag = null; };
@@ -116,7 +139,7 @@ canvas.addEventListener('pointerleave', () => hintAt(null, ''));
 canvas.addEventListener('pointerup', endStroke); canvas.addEventListener('pointercancel', endStroke);
 canvas.addEventListener('pointerleave', () => (ghost.visible = false));
 
-const TOOLS: [Tool, string][] = [['road', 'toolRoad'], ['place', 'toolPlace'], ['turn', 'toolTurn'], ['erase', 'toolErase'], ['move', 'toolMove'], ['rotate', 'toolRotate']];
+const TOOLS: [Tool, string][] = [['road', 'toolRoad'], ['place', 'toolPlace'], ['turn', 'toolTurn'], ['junction', 'toolJunction'], ['erase', 'toolErase'], ['move', 'toolMove'], ['rotate', 'toolRotate']];
 function setTool(t: Tool) { tool = t; for (const [k, id] of TOOLS) $(id).classList.toggle('on', k === t); if (t !== 'place') hintAt(null, ''); }
 for (const [k, id] of TOOLS) $(id).onclick = () => setTool(k);
 $('zoomIn').onclick = () => (cam.goalZoom = Math.min(9, cam.goalZoom * 1.35)); $('zoomOut').onclick = () => (cam.goalZoom = Math.max(0.15, cam.goalZoom / 1.35));
@@ -154,6 +177,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') setTool('road');
   if (e.key === 'p' || e.key === 'P') setTool('place');
   if (e.key === 't' || e.key === 'T') setTool('turn');
+  if (e.key === 'j' || e.key === 'J') setTool('junction');
   if (e.key === 'x' || e.key === 'X') setTool('erase');
   if (e.key === 'm' || e.key === 'M') setTool('move');
   if (e.key === 'o' || e.key === 'O') setTool('rotate');
@@ -174,7 +198,7 @@ let toldEmpty = false;
 const clock = (m: number) => { const h = Math.floor(m / 60), mm = Math.floor(m % 60); return `${((h + 11) % 12) + 1}:${String(mm).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 function hud() {
   const s = city.stats;
-  $('day').textContent = `Day ${s.day} · ${clock(s.minute)}`;
+  $('day').innerHTML = `${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][s.weekday]} · Day ${s.day} · ${clock(s.minute)}` + (s.rush ? ' <span class="rush">Rush hour</span>' : '');
   $('tiles').textContent = String(s.roadTiles);
   $('arrived').textContent = String(s.arrived);
   $('failed').textContent = s.sandbox ? String(s.failed) : `${s.failed} / ${T.failLimit}`;
@@ -194,17 +218,31 @@ $('again').onclick = () => { try { localStorage.removeItem(SAVE_KEY); } catch { 
 $('keep').onclick = () => { city.stats.over = false; city.stats.sandbox = true; $('over').classList.remove('show'); saveNow(); toast('Sandbox: keep building, no fail limit', 'good'); };
 $('newTown').onclick = () => { if (confirm('Start a new town? This one will be cleared.')) { try { localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ } location.reload(); } };
 
+/* ---------- day and night ---------- */
+const hemi = scene.children.find((o) => (o as THREE.HemisphereLight).isHemisphereLight) as THREE.HemisphereLight;
+const DAY_BG = new THREE.Color('#EADBC4'), NIGHT_BG = new THREE.Color('#4F4A63'), DUSK_BG = new THREE.Color('#E9B99A');
+function daylight(m: number): number {   // 0 at night, 1 in the day, smooth dawn (5:30-7:30) and dusk (18:30-20:30)
+  const h = m / 60, ramp = (a: number, b: number, x: number) => Math.min(1, Math.max(0, (x - a) / (b - a)));
+  const v = ramp(5.5, 7.5, h) * (1 - ramp(18.5, 20.5, h));
+  return v * v * (3 - 2 * v);
+}
+function light(m: number) {
+  const d = daylight(m), dusk = Math.max(0, 1 - Math.abs(d - 0.5) * 2) * (m > 12 * 60 ? 1 : 0.6);
+  hemi.intensity = 0.55 + 1.0 * d; stage.sun.intensity = 0.25 + 2.05 * d;
+  (scene.background as THREE.Color).copy(NIGHT_BG).lerp(DAY_BG, d).lerp(DUSK_BG, dusk * 0.5);
+}
+
 /* ---------- loop ---------- */
 let last = performance.now(), paintT = 0, hudT = 0;
 function loop(now: number) {
   const real = Math.min(0.1, (now - last) / 1000); last = now;
   if (!city.stats.over && speed > 0) {
     const steps = Math.ceil(speed * real / (1 / 30)), dt = (speed * real) / steps;   // small steps keep fast speeds stable
-    for (let k = 0; k < steps; k++) { traffic.update(dt); city.update(dt * T.gameMinutesPerSecond, dt); }
+    for (let k = 0; k < steps; k++) { traffic.update(dt, city.clock); city.update(dt * T.gameMinutesPerSecond, dt); }
   }
   paintT -= real; if (paintT <= 0) { roads.paintLoad(); paintT = 0.4; }
   hudT -= real; if (hudT <= 0) { hud(); hudT = 0.2; }
-  city.animate(real);
+  city.animate(real); light(city.stats.minute); junctions.update(city.clock);
   runTicks(now / 1000);
   stage.render();
   city.drawPins(camera);
@@ -212,4 +250,4 @@ function loop(now: number) {
 }
 requestAnimationFrame(loop);
 setTool('place'); setSpeed(1);
-(window as unknown as { __game: unknown }).__game = { city, grid, traffic, cam, roads, paint: (i: number, j: number) => { const was = tool; tool = 'road'; apply(i, j); tool = was; roads.rebuild(); city.roadsChanged(); } };
+(window as unknown as { __game: unknown }).__game = { city, grid, traffic, cam, roads, junction: (i: number, j: number) => cycleJunction(i, j), paint: (i: number, j: number) => { const was = tool; tool = 'road'; apply(i, j); tool = was; roads.rebuild(); junctions.sync(); city.roadsChanged(); } };

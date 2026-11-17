@@ -6,6 +6,9 @@ export const DX = [1, 0, -1, 0];
 export const DZ = [0, 1, 0, -1];
 export const opposite = (d: number) => (d + 2) % 4;
 
+/** What controls a crossing. Only tiles where 3 or 4 roads meet can have one. */
+export const J_NONE = 0, J_STOP = 1, J_LIGHT = 2, J_ROUND = 3;
+
 export interface Placed {
   id: number;
   kind: 'home' | 'shop';
@@ -20,6 +23,8 @@ export class Grid {
   readonly tree: Uint8Array;
   /** Cars currently on each tile, refreshed every frame by traffic. */
   readonly load: Uint16Array;
+  /** Crossing control per tile (J_NONE, J_STOP, J_LIGHT, J_ROUND). */
+  readonly junction: Uint8Array;
 
   constructor() {
     const size = this.n * this.n;
@@ -27,6 +32,7 @@ export class Grid {
     this.building = new Array(size).fill(null);
     this.tree = new Uint8Array(size);
     this.load = new Uint16Array(size);
+    this.junction = new Uint8Array(size);
   }
 
   idx(i: number, j: number): number { return j * this.n + i; }
@@ -43,6 +49,16 @@ export class Grid {
   tileAt(x: number, z: number): [number, number] {
     return [Math.floor(x / T.tile + this.n / 2), Math.floor(z / T.tile + this.n / 2)];
   }
+  /** Is this a crossing (a road tile where 3 or 4 roads meet)? */
+  isCrossing(c: number): boolean {
+    if (!this.road[c]) return false;
+    const [i, j] = this.ij(c); let n = 0;
+    for (let d = 0; d < 4; d++) if (this.isRoad(i + DX[d], j + DZ[d])) n++;
+    return n >= 3;
+  }
+  /** The control that's actually working on a tile (a sign on a tile that's no longer a crossing does nothing). */
+  control(c: number): number { return this.junction[c] && this.isCrossing(c) ? this.junction[c] : J_NONE; }
+
   /** Bit mask of road neighbors: bit d set when the tile in direction d is road. */
   links(i: number, j: number): number {
     let m = 0;

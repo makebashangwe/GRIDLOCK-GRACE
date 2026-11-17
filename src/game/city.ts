@@ -35,12 +35,12 @@ export interface Shop extends Building { kind: 'shop'; type: ShopType; served: n
 type AnyBuilding = Home | Shop;
 interface Trip { home: Home; type: ShopType; deadline: number; state: 'waiting' | 'out' | 'shop' | 'back'; failed: boolean; shop?: Shop; car?: Car | null; until?: number }
 
-export interface Stats { sandbox: boolean; earned: number; arrived: number; failed: number; homes: number; shops: number; demand: number; roadTiles: number; day: number; minute: number; over: boolean }
+export interface Stats { weekday: number; rush: boolean; sandbox: boolean; earned: number; arrived: number; failed: number; homes: number; shops: number; demand: number; roadTiles: number; day: number; minute: number; over: boolean }
 
 export class City {
   homes: Home[] = [];
   shops: Shop[] = [];
-  stats: Stats = { sandbox: false, earned: 0, arrived: 0, failed: 0, homes: 0, shops: 0, demand: 0, roadTiles: T.startRoadTiles, day: 1, minute: T.startMinute, over: false };
+  stats: Stats = { weekday: 0, rush: false, sandbox: false, earned: 0, arrived: 0, failed: 0, homes: 0, shops: 0, demand: 0, roadTiles: T.startRoadTiles, day: 1, minute: T.startMinute, over: false };
   clock = T.startMinute;   // game minutes since day 1 midnight
   /** The hand: the next piece to place is hand[0]. Starts with a grocery and three homes that want it. */
   hand: Piece[] = [{ kind: 'shop', type: 'grocery' }, { kind: 'home', wants: 'grocery' }, { kind: 'home', wants: 'grocery' }, { kind: 'home', wants: 'grocery' }];
@@ -232,13 +232,24 @@ export class City {
 
   private finish(trip: Trip): void {
     if (trip.car) this.carTrip.delete(trip.car);
-    const h = trip.home; h.trip = null; h.nextTrip = this.clock + T.tripEvery[0] + Math.random() * (T.tripEvery[1] - T.tripEvery[0]);
+    const h = trip.home; h.trip = null; h.nextTrip = this.clock + T.tripCooldown;
   }
 
   private fail(trip: Trip): void {
     trip.failed = true; this.stats.failed++;
     this.onEvent(`A trip to ${SHOP_INFO[trip.type].name} missed its deadline`, 'bad');
     if (!this.stats.sandbox && this.stats.failed >= T.failLimit) { this.stats.over = true; this.onEvent('Gridlock! The city ran out of patience.', 'bad'); }
+  }
+
+  /** How busy the streets are right now: rush hours on weekdays, quiet nights, easy weekends. */
+  rhythm(): number {
+    const m = this.clock % 1440, weekend = this.stats.weekday >= 5;
+    const rush = !weekend && ((m >= 7 * 60 && m < 9 * 60) || (m >= 16.5 * 60 && m < 18.5 * 60));
+    this.stats.rush = rush;
+    if (m < 6 * 60 || m >= 22 * 60) return T.nightFactor;
+    if (rush) return T.rushFactor;
+    if (m < 7 * 60 || m >= 20 * 60) return 0.5;
+    return weekend ? 1.2 : 1;
   }
 
   /** Advance the city by `gm` game minutes. */
@@ -248,7 +259,8 @@ export class City {
     this.clock += gm;
     const day = Math.floor(this.clock / 1440);
     if (day > before) { this.stats.roadTiles += T.dailyRoadTiles; this.onEvent(`Day ${day + 1} · +${T.dailyRoadTiles} road tiles`, 'good'); }
-    this.stats.day = day + 1; this.stats.minute = this.clock % 1440;
+    this.stats.day = day + 1; this.stats.minute = this.clock % 1440; this.stats.weekday = day % 7;
+    const rate = T.baseTripRate * this.rhythm();
 
     if (this.clock >= this.nextGrow) { this.nextGrow = this.clock + T.growEvery; this.deal(); }
     if (this.clock >= this.nextShop) {
@@ -262,7 +274,7 @@ export class City {
     this.dispatchT -= realDt;
     const tryDispatch = this.dispatchT <= 0; if (tryDispatch) this.dispatchT = 0.4;
     for (const h of this.homes) {
-      if (!h.trip && this.clock >= h.nextTrip && types.length) {
+      if (!h.trip && this.clock >= h.nextTrip && types.length && Math.random() < gm * rate) {
         const type = types.includes(h.wants) && Math.random() < T.wantShare ? h.wants : types[Math.floor(Math.random() * types.length)];
         h.trip = { home: h, type, deadline: this.clock + T.tripDeadline, state: 'waiting', failed: false };
       }
@@ -328,6 +340,7 @@ export class City {
     return {
       v: 1, clock: this.clock, nextGrow: this.nextGrow, nextShop: this.nextShop, shopsDealt: this.shopsDealt,
       stats: { ...this.stats }, hand: [...this.hand], roads,
+      junctions: roads.filter((c) => g.junction[c]).map((c) => [c, g.junction[c]] as [number, number]),
       buildings: [...this.homes, ...this.shops].map((b) => ({ kind: b.kind, i: b.i, j: b.j, face: b.face, turned: b.turned, wants: b.kind === 'home' ? b.wants : undefined, type: b.kind === 'shop' ? b.type : undefined })),
     };
   }
@@ -335,6 +348,7 @@ export class City {
   load(d: SaveData): void {
     const g = this.grid;
     for (const c of d.roads) { g.road[c] = 1; this.clearTree(c); }
+    for (const [c, k] of d.junctions ?? []) g.junction[c] = k;
     for (const b of d.buildings) {
       const made = b.kind === 'home' ? this.addHome(b.i, b.j, b.wants ?? 'grocery') : this.addShop(b.type ?? 'grocery', b.i, b.j);
       if (!made) continue;
@@ -352,5 +366,6 @@ export interface SaveData {
   v: 1;
   clock: number; nextGrow: number; nextShop: number; shopsDealt: number;
   stats: Stats; hand: Piece[]; roads: number[];
+  junctions?: [number, number][];
   buildings: { kind: 'home' | 'shop'; i: number; j: number; face: number; turned: boolean; wants?: ShopType; type?: ShopType }[];
 }

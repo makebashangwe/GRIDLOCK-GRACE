@@ -25,8 +25,14 @@ export const T = {
 
   /** Trips: a trip that hasn't reached its shop this many game minutes after it starts has failed. */
   tripDeadline: 120,
-  /** Game minutes between a home's trips (random in this range). */
+  /** Game minutes between a home's trips (random in this range). Only used for a new home's first trip. */
   tripEvery: [90, 180] as [number, number],
+  /** Daily rhythm: on average a home starts a trip every 1/baseTripRate game minutes in the daytime,
+      three times as often in rush hour, and rarely at night. A home rests this long after each trip. */
+  baseTripRate: 1 / 110,
+  rushFactor: 3,
+  nightFactor: 0.12,
+  tripCooldown: 30,
   /** Game minutes a car spends at the shop before heading home. */
   shopVisit: 10,
 
@@ -43,6 +49,14 @@ export const T = {
   wantShare: 0.75,
   /** The run ends at this many failed trips. */
   failLimit: 12,
+
+  /** Crossings: how long a car waits at a stop sign (real seconds at 1x), how long each traffic-light
+      direction stays green (game minutes), road-tile cost of a light and a roundabout. */
+  stopWait: 0.7,
+  lightGreen: 22,
+  lightCost: 2,
+  roundCost: 4,
+  roundSpeed: 6.5,
 
   /** Road colors: cars on one tile at once before it shows as slow (amber) and jammed (red). */
   slowAt: 3,

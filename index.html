@@ -11,7 +11,8 @@
     .card { position: fixed; background: var(--card); border-radius: 18px; box-shadow: 0 6px 20px rgba(63, 58, 74, .14); padding: 12px 16px; z-index: 3; }
     #top { left: 16px; top: 16px; width: 270px; }
     #top h1 { margin: 0; font-size: 17px; font-weight: 900; }
-    #day { font-size: 13px; font-weight: 800; opacity: .7; }
+    #day { font-size: 13px; font-weight: 800; color: #6E6878; }
+    .rush { background: #E07A5F; color: #FFFBF4; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 900; margin-left: 4px; }
     .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px; }
     .stat b { display: block; font-size: 22px; font-weight: 900; line-height: 1.1; }
     .stat span { font-size: 10.5px; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; opacity: .55; }
@@ -92,6 +93,7 @@
     <button id="toolPlace" title="P">Place</button>
     <button id="toolRoad" title="R">Road</button>
     <button id="toolTurn" title="T">Turn</button>
+    <button id="toolJunction" title="J">Crossing</button>
     <button id="toolErase" title="X">Erase</button>
     <span class="sep"></span>
     <button id="toolMove" title="M">Move</button>
@@ -99,7 +101,7 @@
     <button id="zoomOut" title="Zoom out">−</button><button id="zoomIn" title="Zoom in">+</button>
   </div>
   <div class="card" id="help">
-    <b>Build your town.</b> Place each home and shop from your hand, then connect them with roads. Doors must face a road (Turn rotates a building). Homes want a shop: put them close to it. On-time trips earn more road. Erase picks a building back up.
+    <b>Build your town.</b> Place each home and shop from your hand, then connect them with roads. Doors must face a road (Turn rotates a building). Homes want a shop: put them close to it. On-time trips earn more road. Crossing sets a stop sign, light or roundabout where roads meet. Erase picks a building back up.
     Right-drag or Option-drag to orbit · Shift-drag or arrow keys to pan · scroll to zoom · Q/E snap 90° · <a href="./gallery.html">asset gallery</a>
   </div>
   <div class="card" id="legend"></div>

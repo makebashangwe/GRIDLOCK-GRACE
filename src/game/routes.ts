@@ -1,6 +1,6 @@
 /* Routing: A* over road tiles (busy tiles cost more, so drivers spread out),
    then the route is turned into a smooth lane path a car can follow. */
-import { Grid, DX, DZ } from './grid';
+import { Grid, DX, DZ, J_ROUND } from './grid';
 import { T } from './tuning';
 
 /** Shortest road route between two road tiles (cell indexes), or null if they aren't connected. */
@@ -47,7 +47,13 @@ export function lanePath(g: Grid, chain: number[]): Pt[] {
     if (k > 0) {   // the tile chain[k] is a road tile: curve if the direction changes inside it
       const din = dirOf(chain[k - 1], chain[k]), dout = dirOf(chain[k], chain[k + 1]);
       const last = pts[pts.length - 1];
-      if (din !== dout) {
+      if (g.control(chain[k]) === J_ROUND) {
+        // roundabout: go counter-clockwise (seen from above) around the island from the entry to the exit
+        const c = g.center(...g.ij(chain[k])), R = 5.2;
+        const ang = (p: Pt) => Math.atan2(-(p.z - c.z), p.x - c.x);
+        const a0 = ang(last); let a1 = ang(e); while (a1 <= a0 + 0.3) a1 += Math.PI * 2;
+        for (let a = a0 + 0.35; a < a1 - 0.2; a += 0.38) pts.push({ x: c.x + Math.cos(a) * R, z: c.z - Math.sin(a) * R });
+      } else if (din !== dout) {
         const ctl = DX[din] !== 0 ? { x: e.x, z: last.z } : { x: last.x, z: e.z };
         for (const t of [0.25, 0.5, 0.75]) {
           const u = 1 - t;

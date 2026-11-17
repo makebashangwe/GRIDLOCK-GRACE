@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeCozyCar } from '../assets/models';
 import { shade } from '../assets/core';
-import { Grid } from './grid';
+import { Grid, J_STOP, J_LIGHT, J_ROUND } from './grid';
 import { T } from './tuning';
 import type { Pt } from './routes';
 
@@ -25,7 +25,13 @@ export interface Car {
   x: number; z: number; hx: number; hz: number;
   paint: number;
   onArrive: () => void;
+  /** The crossing this car has already made its full stop for. */
+  stoppedFor: number;
+  wait: number;
 }
+
+/** Which direction has green at traffic lights: 0 = east-west, 1 = north-south. */
+export function greenAxis(clock: number): number { return Math.floor(clock / T.lightGreen) % 2; }
 
 /** Bake the cozy car into a paint piece (tinted per car) and a fixed-color piece. */
 function bakeCar(): { paint: THREE.BufferGeometry; rest: THREE.BufferGeometry } {
@@ -74,7 +80,7 @@ export class Traffic {
     const lens: number[] = [], cum: number[] = []; let total = 0;
     for (let k = 0; k < pts.length - 1; k++) { const l = Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].z - pts[k].z); lens.push(l); total += l; cum.push(total); }
     const id = this.nextId++;
-    const car: Car = { id, pts, lens, cum, total, s: 0, seg: 0, v: 0, x: pts[0].x, z: pts[0].z, hx: 1, hz: 0, paint: id % PAINTS.length, onArrive };
+    const car: Car = { id, pts, lens, cum, total, s: 0, seg: 0, v: 0, x: pts[0].x, z: pts[0].z, hx: 1, hz: 0, paint: id % PAINTS.length, onArrive, stoppedFor: -1, wait: 0 };
     this.place(car); this.cars.push(car); return car;
   }
 
@@ -95,8 +101,30 @@ export class Traffic {
   }
   private segEnd(c: Car, seg: number): number { return c.cum[seg]; }
 
-  /** Move every car by dt real seconds (already scaled for game speed). */
-  update(dt: number): void {
+  /** What a crossing ahead asks of this car: true = hold before entering it. */
+  private holdAtCrossing(c: Car, clock: number, dt: number): boolean {
+    const g = this.grid;
+    const [ci, cj] = g.tileAt(c.x, c.z), [ai, aj] = g.tileAt(c.x + c.hx * 5.5, c.z + c.hz * 5.5);
+    if (!g.inside(ai, aj) || (ai === ci && aj === cj)) return false;
+    const ahead = g.idx(ai, aj), kind = g.control(ahead);
+    if (kind === J_STOP) {
+      if (c.stoppedFor === ahead) return false;
+      if (c.v < 0.4) { c.wait += dt; if (c.wait >= T.stopWait) { c.stoppedFor = ahead; c.wait = 0; return false; } }
+      return true;
+    }
+    if (kind === J_LIGHT) return (Math.abs(c.hx) > Math.abs(c.hz) ? 0 : 1) !== greenAxis(clock);
+    if (kind === J_ROUND) {   // yield to cars already going round
+      for (const o of this.near(c.x, c.z)) {
+        if (o === c || o.v < 0.5) continue;
+        const [oi, oj] = g.tileAt(o.x, o.z);
+        if (oi === ai && oj === aj && (o.x - c.x) ** 2 + (o.z - c.z) ** 2 < 100) return true;
+      }
+    }
+    return false;
+  }
+
+  /** Move every car by dt real seconds (already scaled for game speed). clock = game minutes (for traffic lights). */
+  update(dt: number, clock = 0): void {
     const g = this.grid;
     this.hash.clear(); g.load.fill(0);
     for (const c of this.cars) {
@@ -116,7 +144,9 @@ export class Traffic {
         if (same > 0.6) { blocked = true; break; }          // queue behind the car ahead
         if (same > -0.6 && o.id < c.id) { blocked = true; break; }   // crossing traffic: lower number goes first
       }
-      const want = blocked ? 0 : T.carSpeed;
+      if (!blocked && this.holdAtCrossing(c, clock, dt)) blocked = true;
+      const [ti, tj] = g.tileAt(c.x, c.z), inRound = g.inside(ti, tj) && g.control(g.idx(ti, tj)) === J_ROUND;
+      const want = blocked ? 0 : inRound ? T.roundSpeed : T.carSpeed;
       c.v += Math.max(-T.carAccel * 2.5 * dt, Math.min(T.carAccel * dt, want - c.v));
       c.s += c.v * dt;
       if (c.s >= c.total) { arrived.push(c); continue; }
