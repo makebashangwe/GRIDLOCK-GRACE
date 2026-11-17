@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gridlock &amp; Grace — Asset Gallery</title>
+  <style>
+    html, body, #app { margin: 0; height: 100%; overflow: hidden; background: #EADBC4; font-family: Nunito, ui-rounded, system-ui, sans-serif; color: #3F3A4A; }
+    .tag { position: fixed; transform: translate(-50%, -100%); pointer-events: none; background: #FFFBF4; border-radius: 999px; padding: 3px 10px; font-weight: 800; font-size: 12px; white-space: nowrap; box-shadow: 0 2px 8px rgba(63, 58, 74, .15); }
+    .tag.big { background: #3F3A4A; color: #F6E7CF; font-size: 14px; transform: translate(-100%, -50%); }
+    #status { position: fixed; left: 16px; bottom: 16px; background: #FFFBF4; border-radius: 12px; padding: 8px 12px; font-weight: 800; font-size: 13px; }
+    #status.bad { background: #C8553D; color: #FFF8EE; }
+    #help { position: fixed; left: 16px; top: 16px; background: #FFFBF4; border-radius: 14px; padding: 10px 14px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="help"><b>Asset gallery</b> · right-drag or shift-drag to pan · scroll to zoom · Q / E to rotate</div>
+  <div id="status">Building models…</div>
+  <script type="module" src="/src/gallery.ts"></script>
+</body>
+</html>
