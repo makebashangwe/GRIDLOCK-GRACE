@@ -16,6 +16,7 @@ import { Traffic, type Car } from './traffic';
 const HOUSE_COLORS: [string, string][] = [['#F6E7CF', '#E07A5F'], ['#F3E3CB', '#81B29A'], ['#F6E7CF', '#D99A8B'], ['#F1DFC4', '#6D597A'], ['#F6E7CF', '#F2CC8F'], ['#F3E3CB', '#C8553D']];
 /** The block test's code house/shop builder (untyped port). */
 const building = M.building as unknown as (spec: Record<string, unknown>) => THREE.Object3D;
+const tryDispatchNow = (t: number) => t <= 0;
 const FACE_ROT = [Math.PI / 2, 0, -Math.PI / 2, Math.PI];
 
 interface Building extends Placed {
@@ -35,12 +36,14 @@ export interface Shop extends Building { kind: 'shop'; type: ShopType; served: n
 type AnyBuilding = Home | Shop;
 interface Trip { home: Home; type: ShopType; deadline: number; state: 'waiting' | 'out' | 'shop' | 'back'; failed: boolean; shop?: Shop; car?: Car | null; until?: number }
 
-export interface Stats { weekday: number; rush: boolean; sandbox: boolean; earned: number; arrived: number; failed: number; homes: number; shops: number; demand: number; roadTiles: number; day: number; minute: number; over: boolean }
+interface Crash { tile: number; cars: Car[]; since: number; tow: Car | null; pin: HTMLDivElement }
+
+export interface Stats { crashes: number; weekday: number; rush: boolean; sandbox: boolean; earned: number; arrived: number; failed: number; homes: number; shops: number; demand: number; roadTiles: number; day: number; minute: number; over: boolean }
 
 export class City {
   homes: Home[] = [];
   shops: Shop[] = [];
-  stats: Stats = { weekday: 0, rush: false, sandbox: false, earned: 0, arrived: 0, failed: 0, homes: 0, shops: 0, demand: 0, roadTiles: T.startRoadTiles, day: 1, minute: T.startMinute, over: false };
+  stats: Stats = { crashes: 0, weekday: 0, rush: false, sandbox: false, earned: 0, arrived: 0, failed: 0, homes: 0, shops: 0, demand: 0, roadTiles: T.startRoadTiles, day: 1, minute: T.startMinute, over: false };
   clock = T.startMinute;   // game minutes since day 1 midnight
   /** The hand: the next piece to place is hand[0]. Starts with a grocery and three homes that want it. */
   hand: Piece[] = [{ kind: 'shop', type: 'grocery' }, { kind: 'home', wants: 'grocery' }, { kind: 'home', wants: 'grocery' }, { kind: 'home', wants: 'grocery' }];
@@ -57,8 +60,12 @@ export class City {
   /** Called when an on-time trip earns a road tile. */
   onEarn: () => void = () => {};
 
+  /** Crashes waiting for the tow truck. */
+  private crashes: Crash[] = [];
+
   constructor(private scene: THREE.Scene, private grid: Grid, private traffic: Traffic, private pinLayer: HTMLElement) {
     this.plantTrees();
+    traffic.onCrash = (a, b, tile) => this.crash(a, b, tile);
   }
 
   /* ---------------- trees ---------------- */
@@ -100,7 +107,8 @@ export class City {
     const g = this.grid, c = g.idx(i, j); if (!g.isFree(i, j)) return null;
     this.clearTree(c);
     const info = SHOP_INFO[type];
-    const obj = shadowAll(building({ w: 10.5, d: 9, h: 7, wall: '#FFF4E2', roof: info.color, awning: info.color, sign: { text: info.sign, color: info.ink }, roofType: 'flat' }));
+    const obj = shadowAll(type === 'tow' ? (M.makeHookAndHaulTowShop() as THREE.Object3D)
+      : building({ w: 10.5, d: 9, h: 7, wall: '#FFF4E2', roof: info.color, awning: info.color, sign: { text: info.sign, color: info.ink }, roofType: 'flat' }));
     const shop: Shop = { id: this.nextId++, kind: 'shop', type, i, j, obj, face: this.roadSide(i, j), access: -1, turned: false, pin: this.pin('pin shop'), served: 0 };
     shop.pin.style.setProperty('--c', info.color); shop.pin.textContent = info.name;
     g.building[c] = shop; this.shops.push(shop);
@@ -184,14 +192,15 @@ export class City {
 
   /* ---------------- new pieces ---------------- */
   /** How many homes the shops can support. */
-  private capacity(): number { return this.shops.length ? T.homesFirstShop + (this.shops.length - 1) * T.homesPerShop : 0; }
+  private capacity(): number { const n = this.shops.filter((s) => s.type !== 'tow').length; return n ? T.homesFirstShop + (n - 1) * T.homesPerShop : 0; }
 
   /** Deal a new home into the hand when the shops have room for more people. */
   private deal(): void {
     const inHand = this.hand.filter((p) => p.kind === 'home').length;
     this.stats.demand = Math.max(0, this.capacity() - this.homes.length - inHand);
     if (this.stats.demand <= 0 || this.hand.length >= T.handMax) return;
-    const types = [...new Set(this.shops.map((s) => s.type))];
+    const types = [...new Set(this.shops.map((s) => s.type))].filter((t) => t !== 'tow');
+    if (!types.length) return;
     const wants = types[Math.floor(Math.random() * types.length)];
     this.hand.push({ kind: 'home', wants });
     this.onEvent(`A family wants to move in near ${SHOP_INFO[wants].name}`, 'good');
@@ -241,6 +250,51 @@ export class City {
     if (!this.stats.sandbox && this.stats.failed >= T.failLimit) { this.stats.over = true; this.onEvent('Gridlock! The city ran out of patience.', 'bad'); }
   }
 
+  /* ---------------- crashes and towing ---------------- */
+  private crash(a: Car, b: Car, tile: number): void {
+    this.stats.crashes++;
+    for (const car of [a, b]) { const trip = this.carTrip.get(car); if (trip && !trip.failed) this.fail(trip); }
+    const pin = document.createElement('div'); pin.className = 'pin crash'; pin.innerHTML = '<b>!</b>Crash'; this.pinLayer.appendChild(pin);
+    this.crashes.push({ tile, cars: [a, b], since: this.clock, tow: null, pin });
+    const hasTow = this.shops.some((s) => s.type === 'tow') || this.hand.some((p) => p.kind === 'shop' && p.type === 'tow');
+    this.onEvent(hasTow ? 'Crash! Hook & Haul is on the way' : 'Crash! Hook & Haul wants to open in your town: place it to clear crashes fast', 'bad');
+    if (!hasTow) this.hand.unshift({ kind: 'shop', type: 'tow' });
+    this.onChange();
+  }
+
+  private clearCrash(cr: Crash): void {
+    for (const car of cr.cars) {
+      this.traffic.remove(car);
+      const trip = this.carTrip.get(car); if (trip) { this.carTrip.delete(car); trip.car = null; this.finish(trip); }
+    }
+    cr.pin.remove(); this.crashes.splice(this.crashes.indexOf(cr), 1);
+  }
+
+  private updateCrashes(tryNow: boolean): void {
+    for (const cr of [...this.crashes]) {
+      if (!cr.tow && this.clock - cr.since > T.crashSelfClear) { this.clearCrash(cr); continue; }
+      if (cr.tow || !tryNow) continue;
+      // send the nearest connected tow truck
+      for (const shop of this.shops) {
+        if (shop.type !== 'tow' || shop.access < 0) continue;
+        const route = findRoute(this.grid, shop.access, cr.tile); if (!route) continue;
+        const pts = lanePath(this.grid, [this.grid.idx(shop.i, shop.j), ...route, route[route.length - 1]]);
+        pts.pop();
+        const truck = M.makeTowTruck() as THREE.Object3D; shadowAll(truck);
+        cr.tow = this.traffic.addSpecial(pts, truck, () => {
+          this.clearCrash(cr);
+          this.onEvent('Hook & Haul cleared the crash', 'good');
+          const back = findRoute(this.grid, cr.tile, shop.access);
+          if (back && this.shops.includes(shop)) {
+            const home = lanePath(this.grid, [...back, this.grid.idx(shop.i, shop.j)]);
+            const t2 = M.makeTowTruck() as THREE.Object3D; shadowAll(t2); this.traffic.addSpecial(home, t2, () => {});
+          }
+        });
+        break;
+      }
+    }
+  }
+
   /** How busy the streets are right now: rush hours on weekdays, quiet nights, easy weekends. */
   rhythm(): number {
     const m = this.clock % 1440, weekend = this.stats.weekday >= 5;
@@ -270,12 +324,13 @@ export class City {
     }
     this.stats.demand = Math.max(0, this.capacity() - this.homes.length - this.hand.filter((p) => p.kind === 'home').length);
 
-    const types = [...new Set(this.shops.map((s) => s.type))];
+    const types = [...new Set(this.shops.map((s) => s.type))].filter((t) => t !== 'tow');
     this.dispatchT -= realDt;
+    this.updateCrashes(tryDispatchNow(this.dispatchT));
     const tryDispatch = this.dispatchT <= 0; if (tryDispatch) this.dispatchT = 0.4;
     for (const h of this.homes) {
       if (!h.trip && this.clock >= h.nextTrip && types.length && Math.random() < gm * rate) {
-        const type = types.includes(h.wants) && Math.random() < T.wantShare ? h.wants : types[Math.floor(Math.random() * types.length)];
+        const type: ShopType = (types as ShopType[]).includes(h.wants) && Math.random() < T.wantShare ? h.wants : types[Math.floor(Math.random() * types.length)];
         h.trip = { home: h, type, deadline: this.clock + T.tripDeadline, state: 'waiting', failed: false };
       }
       const trip = h.trip; if (!trip) continue;
@@ -325,6 +380,10 @@ export class City {
       h.pin.style.setProperty('--p', String(t?.failed ? 1 : left));
       h.pin.classList.toggle('late', !!t?.failed);
       h.pin.classList.toggle('stuck', blocked);
+    }
+    for (const cr of this.crashes) {
+      const [i, j] = this.grid.ij(cr.tile), { x, z } = this.grid.center(i, j); v.set(x, 9, z).project(camera);
+      cr.pin.style.left = ((v.x + 1) / 2) * innerWidth + 'px'; cr.pin.style.top = ((1 - v.y) / 2) * innerHeight + 'px';
     }
     for (const s of this.shops) {
       if (!put(s, 13)) { s.pin.style.display = 'none'; continue; }

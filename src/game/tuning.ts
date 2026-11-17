@@ -58,15 +58,22 @@ export const T = {
   roundCost: 4,
   roundSpeed: 6.5,
 
+  /** Crashes: chance that a near miss at a crossing with no control becomes a crash, and how long a crash
+      blocks the road (game minutes) when no tow truck can reach it. */
+  crashChance: 0.14,
+  crashSelfClear: 150,
+
   /** Road colors: cars on one tile at once before it shows as slow (amber) and jammed (red). */
   slowAt: 3,
   jamAt: 5,
 };
 
-export type ShopType = 'grocery' | 'cafe' | 'pizza';
+export type ShopType = 'grocery' | 'cafe' | 'pizza' | 'tow';
 export const SHOP_INFO: Record<ShopType, { name: string; sign: string; color: string; ink: string }> = {
   grocery: { name: 'Fresh Market', sign: 'Fresh Market', color: '#81B29A', ink: '#4E8F6A' },
   cafe: { name: 'Corner Café', sign: 'Corner Café', color: '#4E8FA6', ink: '#3B7187' },
   pizza: { name: 'Speedy Slice', sign: 'Speedy Slice', color: '#E07A5F', ink: '#C8553D' },
+  tow: { name: 'Hook & Haul', sign: 'Hook & Haul', color: '#F4B860', ink: '#B57B12' },
 };
+/** Shops homes make trips to, in the order new ones are dealt. Hook & Haul is dealt when the first crash happens. */
 export const SHOP_ORDER: ShopType[] = ['grocery', 'cafe', 'pizza'];

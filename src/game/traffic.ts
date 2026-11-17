@@ -28,6 +28,11 @@ export interface Car {
   /** The crossing this car has already made its full stop for. */
   stoppedFor: number;
   wait: number;
+  /** In a crash: stopped where it is until towed. */
+  crashed: boolean;
+  /** Service vehicles (the tow truck) are their own model and ignore traffic. */
+  special?: THREE.Object3D;
+  jitter: number;
 }
 
 /** Which direction has green at traffic lights: 0 = east-west, 1 = north-south. */
@@ -61,7 +66,7 @@ export class Traffic {
   private UP = new THREE.Vector3(0, 1, 0); private col = new THREE.Color();
   private hash = new Map<number, Car[]>();
 
-  constructor(scene: THREE.Scene, private grid: Grid) {
+  constructor(private scene: THREE.Scene, private grid: Grid) {
     const baked = bakeCar();
     this.paintIM = new THREE.InstancedMesh(baked.paint, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), MAXCARS);
     this.restIM = new THREE.InstancedMesh(baked.rest, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), MAXCARS);
@@ -80,11 +85,22 @@ export class Traffic {
     const lens: number[] = [], cum: number[] = []; let total = 0;
     for (let k = 0; k < pts.length - 1; k++) { const l = Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].z - pts[k].z); lens.push(l); total += l; cum.push(total); }
     const id = this.nextId++;
-    const car: Car = { id, pts, lens, cum, total, s: 0, seg: 0, v: 0, x: pts[0].x, z: pts[0].z, hx: 1, hz: 0, paint: id % PAINTS.length, onArrive, stoppedFor: -1, wait: 0 };
+    const car: Car = { id, pts, lens, cum, total, s: 0, seg: 0, v: 0, x: pts[0].x, z: pts[0].z, hx: 1, hz: 0, paint: id % PAINTS.length, onArrive, stoppedFor: -1, wait: 0, crashed: false, jitter: 0 };
     this.place(car); this.cars.push(car); return car;
   }
 
-  remove(car: Car): void { const k = this.cars.indexOf(car); if (k >= 0) this.cars.splice(k, 1); }
+  remove(car: Car): void { const k = this.cars.indexOf(car); if (k >= 0) this.cars.splice(k, 1); if (car.special) this.scene.remove(car.special); }
+
+  /** A service vehicle with its own model (drives through traffic, never crashes). */
+  addSpecial(pts: Pt[], obj: THREE.Object3D, onArrive: () => void): Car | null {
+    const car = this.add(pts, onArrive); if (!car) return null;
+    car.special = obj; this.scene.add(obj); this.place(car); return car;
+  }
+
+  /** Called when two cars crash: (the two cars, the crossing tile). */
+  onCrash: (a: Car, b: Car, tile: number) => void = () => {};
+  private nearMiss = new Map<number, number>();
+  private time = 0;
 
   private key(x: number, z: number) { return (Math.floor(x / 10) + 500) * 2000 + (Math.floor(z / 10) + 500); }
   private *near(x: number, z: number): Generator<Car> {
@@ -132,28 +148,51 @@ export class Traffic {
       const [i, j] = g.tileAt(c.x, c.z); if (g.inside(i, j)) g.load[g.idx(i, j)]++;
     }
     const arrived: Car[] = [];
+    this.time += dt;
     for (const c of this.cars) {
+      if (c.crashed) continue;
       let blocked = false;
-      for (const o of this.near(c.x, c.z)) {
-        if (o === c) continue;
+      for (const o of c.special ? [] : this.near(c.x, c.z)) {
+        if (o === c || o.special) continue;
         const dx = o.x - c.x, dz = o.z - c.z, along = dx * c.hx + dz * c.hz;
         if (along <= 0.2 || along > T.followGap) continue;
         const side = Math.abs(dx * -c.hz + dz * c.hx);
+        if (o.crashed && side < 2.8) { blocked = true; break; }   // a crash blocks everyone
         if (side > 1.9) continue;
         const same = o.hx * c.hx + o.hz * c.hz;
         if (same > 0.6) { blocked = true; break; }          // queue behind the car ahead
         if (same > -0.6 && o.id < c.id) { blocked = true; break; }   // crossing traffic: lower number goes first
       }
-      if (!blocked && this.holdAtCrossing(c, clock, dt)) blocked = true;
+      if (!blocked && !c.special && this.holdAtCrossing(c, clock, dt)) blocked = true;
       const [ti, tj] = g.tileAt(c.x, c.z), inRound = g.inside(ti, tj) && g.control(g.idx(ti, tj)) === J_ROUND;
       const want = blocked ? 0 : inRound ? T.roundSpeed : T.carSpeed;
       c.v += Math.max(-T.carAccel * 2.5 * dt, Math.min(T.carAccel * dt, want - c.v));
       c.s += c.v * dt;
       if (c.s >= c.total) { arrived.push(c); continue; }
       this.place(c);
+      if (!c.special && c.v > 4 && g.inside(ti, tj) && !g.control(g.idx(ti, tj)) && g.isCrossing(g.idx(ti, tj))) this.checkCrash(c, g.idx(ti, tj));
     }
     for (const c of arrived) { this.remove(c); c.onArrive(); }
     this.draw();
+  }
+
+  /** Two cars crossing paths in an uncontrolled crossing: a near miss, which sometimes becomes a crash. */
+  private checkCrash(c: Car, tile: number): void {
+    const g = this.grid;
+    for (const o of this.near(c.x, c.z)) {
+      if (o === c || o.crashed || o.special || o.v < 3) continue;
+      if ((o.x - c.x) ** 2 + (o.z - c.z) ** 2 > 13) continue;
+      if (Math.abs(o.hx * c.hx + o.hz * c.hz) > 0.5) continue;   // only paths that cross
+      const [oi, oj] = g.tileAt(o.x, o.z); if (g.idx(oi, oj) !== tile) continue;
+      const key = Math.min(c.id, o.id) * 100000 + Math.max(c.id, o.id);
+      if ((this.nearMiss.get(key) ?? -99) > this.time - 4) continue;
+      if (this.nearMiss.size > 3000) this.nearMiss.clear();
+      this.nearMiss.set(key, this.time);
+      if (Math.random() < T.crashChance) {
+        c.crashed = o.crashed = true; c.v = o.v = 0; c.jitter = 0.5; o.jitter = -0.7;
+        this.onCrash(c, o, tile); return;
+      }
+    }
   }
 
   /** Cars standing still right now: used by the HUD as a "how jammed is it" read. */
@@ -162,7 +201,8 @@ export class Traffic {
   private draw(): void {
     let k = 0;
     for (const c of this.cars) {
-      this.Q.setFromAxisAngle(this.UP, Math.atan2(-c.hz, c.hx));
+      if (c.special) { c.special.position.set(c.x, 0.05, c.z); c.special.rotation.y = Math.atan2(-c.hz, c.hx); continue; }
+      this.Q.setFromAxisAngle(this.UP, Math.atan2(-c.hz, c.hx) + c.jitter);
       this.M.compose(this.V.set(c.x, 0.05, c.z), this.Q, this.S);
       this.paintIM.setMatrixAt(k, this.M); this.restIM.setMatrixAt(k, this.M);
       this.paintIM.setColorAt(k, this.col.set(PAINTS[c.paint]));

@@ -53,6 +53,10 @@
     .pin.stuck::before { content: '!'; position: absolute; left: 50%; top: -18px; transform: translateX(-50%); font-weight: 900; font-size: 14px; color: #C8553D; }
     .pin.shop { width: auto; height: auto; border-radius: 999px; background: var(--c); color: #FFFBF4; font-weight: 900; font-size: 12px; padding: 3px 10px; white-space: nowrap; }
     .pin.shop::after { display: none; }
+    .pin.crash { width: auto; height: auto; border-radius: 999px; background: #E07A5F; color: #FFFBF4; font-weight: 900; font-size: 12.5px; padding: 3px 10px 3px 4px; display: flex; align-items: center; gap: 6px; animation: bob 1s infinite alternate; }
+    .pin.crash::after { display: none; }
+    .pin.crash b { width: 18px; height: 18px; border-radius: 50%; background: #FFFBF4; color: #E07A5F; display: grid; place-items: center; }
+    @keyframes bob { to { transform: translate(-50%, -115%); } }
     @keyframes pulse { to { transform: translate(-50%, -100%) scale(1.25); } }
     #over { position: fixed; inset: 0; display: none; place-items: center; background: rgba(63, 58, 74, .35); z-index: 10; }
     #over.show { display: grid; }
