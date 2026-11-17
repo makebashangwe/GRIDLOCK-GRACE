@@ -50,6 +50,7 @@ function apply(i: number, j: number): boolean {
   if (tool === 'road') {
     if (!canPlace(i, j)) return false;
     city.clearTree(c); grid.road[c] = 1; city.stats.roadTiles--;
+    if (city.stats.roadTiles === 0 && !toldEmpty) { toldEmpty = true; toast(`Out of road. Every ${T.tripsPerTile} on-time trips earn a tile, and more come each morning.`, 'bad'); }
     return true;
   }
   if (tool === 'erase') {
@@ -160,6 +161,9 @@ function toast(text: string, tone: 'good' | 'bad' = 'good') {
   setTimeout(() => el.classList.add('out'), 3200); setTimeout(() => el.remove(), 3800);
 }
 city.onEvent = (text, tone) => { toast(text, tone); if (city.stats.over) gameOver(); };
+// on-time trips earn road: the tile counter pops, and the first time you run dry we explain how to get more
+city.onEarn = () => { const el = $('tiles'); el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); };
+let toldEmpty = false;
 const clock = (m: number) => { const h = Math.floor(m / 60), mm = Math.floor(m % 60); return `${((h + 11) % 12) + 1}:${String(mm).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 function hud() {
   const s = city.stats;

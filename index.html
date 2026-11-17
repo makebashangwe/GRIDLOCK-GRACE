@@ -15,6 +15,9 @@
     .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px; }
     .stat b { display: block; font-size: 22px; font-weight: 900; line-height: 1.1; }
     .stat span { font-size: 10.5px; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; opacity: .55; }
+    #tiles.pop { animation: pop .5s; color: #4E8F6A; }
+    @keyframes pop { 30% { transform: scale(1.35); } }
+    .stat b { transform-origin: left center; }
     .bar { height: 6px; background: #F1E6D6; border-radius: 6px; margin-top: 8px; overflow: hidden; }
     #failbar { height: 100%; width: 0; background: #E07A5F; transition: width .3s; }
     #homes { font-size: 12px; opacity: .65; margin-top: 6px; }
@@ -89,7 +92,7 @@
     <button id="zoomOut" title="Zoom out">−</button><button id="zoomIn" title="Zoom in">+</button>
   </div>
   <div class="card" id="help">
-    <b>Build your town.</b> Place each home and shop from your hand, then connect them with roads. Doors must face a road (Turn rotates a building). Homes want a shop: put them close to it. Erase picks a building back up.
+    <b>Build your town.</b> Place each home and shop from your hand, then connect them with roads. Doors must face a road (Turn rotates a building). Homes want a shop: put them close to it. On-time trips earn more road. Erase picks a building back up.
     Right-drag or Option-drag to orbit · Shift-drag or arrow keys to pan · scroll to zoom · Q/E snap 90° · <a href="./gallery.html">asset gallery</a>
   </div>
   <div class="card" id="legend"></div>

@@ -15,6 +15,8 @@ export const T = {
   /** Road budget: tiles to start with, and tiles added every morning. */
   startRoadTiles: 45,
   dailyRoadTiles: 18,
+  /** On-time trips earn road: one tile for every this many cars that arrive on time. */
+  tripsPerTile: 2,
 
   /** Cars. */
   carSpeed: 11,

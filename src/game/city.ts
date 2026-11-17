@@ -35,12 +35,12 @@ export interface Shop extends Building { kind: 'shop'; type: ShopType; served: n
 type AnyBuilding = Home | Shop;
 interface Trip { home: Home; type: ShopType; deadline: number; state: 'waiting' | 'out' | 'shop' | 'back'; failed: boolean; shop?: Shop; car?: Car | null; until?: number }
 
-export interface Stats { arrived: number; failed: number; homes: number; shops: number; demand: number; roadTiles: number; day: number; minute: number; over: boolean }
+export interface Stats { earned: number; arrived: number; failed: number; homes: number; shops: number; demand: number; roadTiles: number; day: number; minute: number; over: boolean }
 
 export class City {
   homes: Home[] = [];
   shops: Shop[] = [];
-  stats: Stats = { arrived: 0, failed: 0, homes: 0, shops: 0, demand: 0, roadTiles: T.startRoadTiles, day: 1, minute: T.startMinute, over: false };
+  stats: Stats = { earned: 0, arrived: 0, failed: 0, homes: 0, shops: 0, demand: 0, roadTiles: T.startRoadTiles, day: 1, minute: T.startMinute, over: false };
   clock = T.startMinute;   // game minutes since day 1 midnight
   /** The hand: the next piece to place is hand[0]. Starts with a grocery and three homes that want it. */
   hand: Piece[] = [{ kind: 'shop', type: 'grocery' }, { kind: 'home', wants: 'grocery' }, { kind: 'home', wants: 'grocery' }, { kind: 'home', wants: 'grocery' }];
@@ -54,6 +54,8 @@ export class City {
   onEvent: (text: string, tone?: 'good' | 'bad') => void = () => {};
   /** Called when buildings appear or vanish, or the hand changes. */
   onChange: () => void = () => {};
+  /** Called when an on-time trip earns a road tile. */
+  onEarn: () => void = () => {};
 
   constructor(private scene: THREE.Scene, private grid: Grid, private traffic: Traffic, private pinLayer: HTMLElement) {
     this.plantTrees();
@@ -222,7 +224,10 @@ export class City {
   private arriveShop(trip: Trip): void {
     if (trip.car) this.carTrip.delete(trip.car);
     trip.car = null; trip.state = 'shop'; trip.until = this.clock + T.shopVisit;
-    if (!trip.failed) { this.stats.arrived++; if (trip.shop) trip.shop.served++; }
+    if (!trip.failed) {
+      this.stats.arrived++; if (trip.shop) trip.shop.served++;
+      if (this.stats.arrived % T.tripsPerTile === 0) { this.stats.roadTiles++; this.stats.earned++; this.onEarn(); }
+    }
   }
 
   private finish(trip: Trip): void {
