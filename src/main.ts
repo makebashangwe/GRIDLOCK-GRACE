@@ -3,9 +3,9 @@
 import * as THREE from 'three';
 import { createStage } from './engine/stage';
 import { runTicks } from './engine/tick';
-import { C } from './assets/core';
 import { Grid } from './game/grid';
 import { RoadView } from './game/roadView';
+import { TerrainView, makeRiver } from './game/terrain';
 import { JunctionView } from './game/junctions';
 import { J_NONE, J_STOP, J_LIGHT, J_ROUND } from './game/grid';
 import { Traffic } from './game/traffic';
@@ -19,10 +19,8 @@ const $ = (id: string) => document.getElementById(id)!;
 /* ---------- world ---------- */
 const grid = new Grid();
 const size = T.tile * grid.n;
-const land = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshStandardMaterial({ color: C.grass, roughness: 0.95 }));
-land.rotation.x = -Math.PI / 2; land.receiveShadow = true; scene.add(land);
 const edge = new THREE.Mesh(new THREE.BoxGeometry(size + 6, 2, size + 6), new THREE.MeshStandardMaterial({ color: '#B9A58F', roughness: 0.95 }));
-edge.position.y = -1.02; scene.add(edge);
+edge.position.y = -2.6; scene.add(edge);   // the slab sits below the riverbed so the water shows
 const gridLines = new THREE.GridHelper(size, grid.n, '#8DAA7F', '#8DAA7F');
 const gm = gridLines.material as THREE.Material; gm.transparent = true; gm.opacity = 0.28; gridLines.position.y = 0.015; scene.add(gridLines);
 
@@ -31,7 +29,10 @@ const traffic = new Traffic(scene, grid);
 const city = new City(scene, grid, traffic, $('pins'));
 /* ---------- saving: the town autosaves and comes back when you return ---------- */
 const SAVE_KEY = 'gridlock-grace-town-v1';
-try { const raw = localStorage.getItem(SAVE_KEY); if (raw) city.load(JSON.parse(raw) as SaveData); } catch { /* a broken save just means a fresh town */ }
+let loaded = false;
+try { const raw = localStorage.getItem(SAVE_KEY); if (raw) { city.load(JSON.parse(raw) as SaveData); loaded = true; } } catch { /* a broken save just means a fresh town */ }
+if (!loaded) { makeRiver(grid); for (let c = 0; c < grid.water.length; c++) if (grid.water[c]) city.clearTree(c); }
+const terrain = new TerrainView(scene, grid); terrain.rebuild();
 const saveNow = () => { try { if (!city.stats.over) localStorage.setItem(SAVE_KEY, JSON.stringify(city.save())); } catch { /* storage full or blocked */ } };
 setInterval(saveNow, 5000);
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
@@ -53,7 +54,11 @@ function tileUnder(e: PointerEvent): [number, number] | null {
   if (!ray.ray.intersectPlane(floor, hit)) return null;
   const [i, j] = grid.tileAt(hit.x, hit.z); return grid.inside(i, j) ? [i, j] : null;
 }
-function canPlace(i: number, j: number) { return grid.isFree(i, j) && city.stats.roadTiles > 0; }
+function canPlace(i: number, j: number) {
+  const c = grid.idx(i, j);
+  if (grid.inside(i, j) && grid.water[c] && !grid.road[c]) return city.stats.bridges > 0;   // a bridge piece
+  return grid.isFree(i, j) && city.stats.roadTiles > 0;
+}
 /* ---------- crossings: stop sign -> traffic light -> roundabout -> nothing ---------- */
 const J_INFO: Record<number, { name: string; note: string }> = {
   [J_NONE]: { name: 'No control', note: 'fast, but busy crossings get messy' },
@@ -82,13 +87,14 @@ function apply(i: number, j: number): boolean {
   const c = grid.idx(i, j);
   if (tool === 'road') {
     if (!canPlace(i, j)) return false;
+    if (grid.water[c]) { grid.road[c] = 1; city.stats.bridges--; if (!city.stats.bridges) toast('That was your last bridge piece. Sunday picks can bring more.', 'bad'); return true; }
     city.clearTree(c); grid.road[c] = 1; city.stats.roadTiles--;
     if (city.stats.roadTiles === 0 && !toldEmpty) { toldEmpty = true; toast(`Out of road. Every ${T.tripsPerTile} on-time trips earn a tile, and more come each morning.`, 'bad'); }
     return true;
   }
   if (tool === 'avenue') {
     // new avenue on grass, or upgrade a street (pay the difference)
-    const cost = grid.road[c] === 1 ? T.avenueCost - 1 : grid.isFree(i, j) ? T.avenueCost : -1;
+    const cost = grid.water[c] ? -1 : grid.road[c] === 1 ? T.avenueCost - 1 : grid.isFree(i, j) ? T.avenueCost : -1;
     if (cost < 0 || cost > city.stats.roadTiles) return false;
     city.clearTree(c); grid.road[c] = 2; city.stats.roadTiles -= cost;
     return true;
@@ -96,7 +102,8 @@ function apply(i: number, j: number): boolean {
   if (tool === 'erase') {
     if (grid.building[c]) { city.remove(i, j); return true; }
     if (!grid.road[c]) return false;
-    city.stats.roadTiles += grid.road[c] + grid.jspent[c]; grid.junction[c] = J_NONE; grid.jspent[c] = 0; grid.road[c] = 0;
+    if (grid.water[c]) city.stats.bridges++; else city.stats.roadTiles += grid.road[c];
+    city.stats.roadTiles += grid.jspent[c]; grid.junction[c] = J_NONE; grid.jspent[c] = 0; grid.road[c] = 0;
     return true;
   }
   return false;
@@ -142,7 +149,7 @@ canvas.addEventListener('pointermove', (e) => {
   const ok = tool === 'road' ? canPlace(...t) : tool === 'avenue' ? (grid.road[c] === 1 && city.stats.roadTiles >= T.avenueCost - 1) || (grid.isFree(...t) && city.stats.roadTiles >= T.avenueCost) : tool === 'place' ? grid.isFree(...t) && city.hand.length > 0
     : tool === 'turn' ? !!grid.building[c] : tool === 'junction' ? grid.isCrossing(c) : !!grid.building[c] || grid.isRoad(...t);
   ghostMat.color.set(tool === 'erase' ? '#C8553D' : ok ? (tool === 'place' ? pieceColor() : '#4E8FA6') : '#C8553D'); ghostMat.opacity = ok ? 0.42 : 0.22;
-  hintAt(e, tool === 'avenue' && ok ? (grid.road[c] === 1 ? `Upgrade to avenue · ${T.avenueCost - 1} road tile` : `Avenue · ${T.avenueCost} road tiles`) : tool === 'place' && ok ? placeHint(...t) : tool === 'junction' && ok ? `Next: ${J_INFO[nextJunction(grid.junction[c])].name} · ${J_INFO[nextJunction(grid.junction[c])].note}` : '');
+  hintAt(e, tool === 'road' && ok && grid.water[c] ? `Bridge · uses 1 of your ${city.stats.bridges} bridge pieces · crosses east-west` : tool === 'avenue' && ok ? (grid.road[c] === 1 ? `Upgrade to avenue · ${T.avenueCost - 1} road tile` : `Avenue · ${T.avenueCost} road tiles`) : tool === 'place' && ok ? placeHint(...t) : tool === 'junction' && ok ? `Next: ${J_INFO[nextJunction(grid.junction[c])].name} · ${J_INFO[nextJunction(grid.junction[c])].note}` : '');
   if (stroke && (e.buttons & 1)) paintTo(t);
 });
 const endStroke = () => { stroke = null; toolDrag = null; };
@@ -217,7 +224,7 @@ function hud() {
   ($('failbar') as HTMLElement).style.width = s.sandbox ? '0%' : `${(s.failed / T.failLimit) * 100}%`;
   $('mode').textContent = s.sandbox ? 'Sandbox' : '';
   const gl = city.goalText(); $('goalText').textContent = gl.text; $('goalProg').textContent = gl.progress; ($('goalBar') as HTMLElement).style.width = `${gl.frac * 100}%`;
-  const tk = city.tokens; $('tokens').textContent = [tk.lights ? `${tk.lights} free light${tk.lights > 1 ? 's' : ''}` : '', tk.round ? `${tk.round} free roundabout${tk.round > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
+  const tk = city.tokens; $('tokens').textContent = [`${s.bridges} bridge piece${s.bridges === 1 ? '' : 's'}`,tk.lights ? `${tk.lights} free light${tk.lights > 1 ? 's' : ''}` : '', tk.round ? `${tk.round} free roundabout${tk.round > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
   $('homes').textContent = `${s.homes} homes · ${s.shops} shops · ${traffic.cars.length} cars · room for ${s.demand} more`;
   drawHand();
 }

@@ -25,6 +25,8 @@ export class Grid {
   readonly load: Uint16Array;
   /** Crossing control per tile (J_NONE, J_STOP, J_LIGHT, J_ROUND). */
   readonly junction: Uint8Array;
+  /** River tiles. A road on water is a bridge, and bridges only run east-west (across the river). */
+  readonly water: Uint8Array;
   /** Road tiles actually spent on each crossing's control (free upgrade tokens spend none). */
   readonly jspent: Uint8Array;
 
@@ -35,6 +37,7 @@ export class Grid {
     this.tree = new Uint8Array(size);
     this.load = new Uint16Array(size);
     this.junction = new Uint8Array(size);
+    this.water = new Uint8Array(size);
     this.jspent = new Uint8Array(size);
   }
 
@@ -44,7 +47,15 @@ export class Grid {
   /** Road tiles hold 1 for a street, 2 for an avenue. */
   isRoad(i: number, j: number): boolean { return this.inside(i, j) && this.road[this.idx(i, j)] > 0; }
   isAvenue(c: number): boolean { return this.road[c] === 2; }
-  isFree(i: number, j: number): boolean { const c = this.idx(i, j); return this.inside(i, j) && !this.road[c] && !this.building[c]; }
+  isFree(i: number, j: number): boolean { const c = this.idx(i, j); return this.inside(i, j) && !this.road[c] && !this.building[c] && !this.water[c]; }
+  isBridge(c: number): boolean { return this.road[c] > 0 && this.water[c] === 1; }
+  /** Can traffic go from tile (i, j) to its neighbor in direction d? (Bridges only connect east and west.) */
+  connects(i: number, j: number, d: number): boolean {
+    const ni = i + DX[d], nj = j + DZ[d];
+    if (!this.isRoad(ni, nj)) return false;
+    if (d % 2 === 1 && (this.water[this.idx(ni, nj)] || (this.inside(i, j) && this.water[this.idx(i, j)]))) return false;
+    return true;
+  }
 
   /** World position of a tile's center. */
   center(i: number, j: number): { x: number; z: number } {
@@ -58,7 +69,7 @@ export class Grid {
   isCrossing(c: number): boolean {
     if (!this.road[c]) return false;
     const [i, j] = this.ij(c); let n = 0;
-    for (let d = 0; d < 4; d++) if (this.isRoad(i + DX[d], j + DZ[d])) n++;
+    for (let d = 0; d < 4; d++) if (this.connects(i, j, d)) n++;
     return n >= 3;
   }
   /** The control that's actually working on a tile (a sign on a tile that's no longer a crossing does nothing). */
@@ -67,7 +78,7 @@ export class Grid {
   /** Bit mask of road neighbors: bit d set when the tile in direction d is road. */
   links(i: number, j: number): number {
     let m = 0;
-    for (let d = 0; d < 4; d++) if (this.isRoad(i + DX[d], j + DZ[d])) m |= 1 << d;
+    for (let d = 0; d < 4; d++) if (this.connects(i, j, d)) m |= 1 << d;
     return m;
   }
 }

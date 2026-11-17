@@ -40,7 +40,7 @@ export class JunctionView {
       } else {
         p.lamps = [];
         for (let d = 0; d < 4; d++) {
-          if (!g.isRoad(i + DX[d], j + DZ[d])) continue;
+          if (!g.connects(i, j, d)) continue;
           // the approach from side d: cars drive in heading opposite(d); the post stands on their right-hand corner
           const od = opposite(d), rx = -DZ[od], rz = DX[od];
           const px = DX[d] * 5.9 + rx * 5.9, pz = DZ[d] * 5.9 + rz * 5.9, face = Math.atan2(DX[d], DZ[d]);

@@ -17,6 +17,10 @@ export class RoadView {
   private dashes: THREE.InstancedMesh;
   private stripes: THREE.InstancedMesh;
   private solids: THREE.InstancedMesh;
+  private deck: THREE.InstancedMesh;
+  private rails: THREE.InstancedMesh;
+  private posts: THREE.InstancedMesh;
+  private piers: THREE.InstancedMesh;
   private cells: number[] = [];
   private m = new THREE.Matrix4();
   private q = new THREE.Quaternion();
@@ -33,10 +37,15 @@ export class RoadView {
     this.dashes = new THREE.InstancedMesh(new THREE.PlaneGeometry(3.2, 0.42).rotateX(-Math.PI / 2), mat(C.lane), MAX * 8);
     this.stripes = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.8, 3.2).rotateX(-Math.PI / 2), mat('#FFFFFF'), MAX * 24);
     this.solids = new THREE.InstancedMesh(new THREE.PlaneGeometry(T.tile, 0.22).rotateX(-Math.PI / 2), mat(C.lane), MAX * 2);
-    for (const im of [this.asphalt, this.walks, this.corners, this.dashes, this.stripes, this.solids]) {
+    // bridges: the same family as the Blender bridge (street-gray deck, coral railings, stone piers)
+    this.deck = new THREE.InstancedMesh(new THREE.BoxGeometry(T.tile, 1.1, T.tile - 0.4), mat(C.street), MAX);
+    this.rails = new THREE.InstancedMesh(new THREE.BoxGeometry(T.tile, 0.32, 0.32), mat('#E07A5F'), MAX * 2);
+    this.posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.3, 1.4, 0.3), mat('#E07A5F'), MAX * 10);
+    this.piers = new THREE.InstancedMesh(new THREE.CylinderGeometry(1.0, 1.1, 2.2, 8), mat('#B8A99A'), MAX * 2);
+    for (const im of [this.asphalt, this.walks, this.corners, this.dashes, this.stripes, this.solids, this.deck, this.rails, this.posts, this.piers]) {
       im.receiveShadow = true; im.count = 0; im.frustumCulled = false; scene.add(im);
     }
-    this.walks.castShadow = this.corners.castShadow = true;
+    this.walks.castShadow = this.corners.castShadow = this.deck.castShadow = this.rails.castShadow = this.posts.castShadow = true;
   }
 
   private put(im: THREE.InstancedMesh, k: number, x: number, y: number, z: number, rot: number, sx = 1, sz = 1): void {
@@ -46,7 +55,7 @@ export class RoadView {
   /** Rebuild after any road change. */
   rebuild(): void {
     const g = this.grid, h = T.tile / 2;
-    let a = 0, w = 0, c = 0, d = 0, s = 0, so = 0;
+    let a = 0, w = 0, c = 0, d = 0, s = 0, so = 0, dk = 0, rl = 0, ps = 0, pr = 0;
     this.cells = [];
     for (let j = 0; j < g.n; j++) for (let i = 0; i < g.n; i++) {
       if (!g.isRoad(i, j)) continue;
@@ -54,6 +63,14 @@ export class RoadView {
       this.cells.push(g.idx(i, j));
       const av = g.isAvenue(g.idx(i, j)), walk = av ? WALK_AV : WALK, ws = walk / WALK;
       this.put(this.asphalt, a++, x, 0.03, z, 0);
+      if (g.water[g.idx(i, j)]) {   // bridge: deck under the road, railings along both sides, piers in the water
+        this.put(this.deck, dk++, x, -0.53, z, 0);
+        for (const side of [-1, 1]) {
+          this.put(this.rails, rl++, x, 1.55, z + side * (h - 0.35), 0);
+          for (let k = -2; k <= 2; k++) this.put(this.posts, ps++, x + k * 3.2, 1.0, z + side * (h - 0.35), 0);
+          this.put(this.piers, pr++, x, -1.9, z + side * 3.6, 0);
+        }
+      }
       // sidewalk along each side that isn't connected to another road
       for (let k = 0; k < 4; k++) {
         if (links & (1 << k)) continue;
@@ -89,8 +106,8 @@ export class RoadView {
         }
       }
     }
-    this.asphalt.count = a; this.walks.count = w; this.corners.count = c; this.dashes.count = d; this.stripes.count = s; this.solids.count = so;
-    for (const im of [this.asphalt, this.walks, this.corners, this.dashes, this.stripes, this.solids]) im.instanceMatrix.needsUpdate = true;
+    this.asphalt.count = a; this.walks.count = w; this.corners.count = c; this.dashes.count = d; this.stripes.count = s; this.solids.count = so; this.deck.count = dk; this.rails.count = rl; this.posts.count = ps; this.piers.count = pr;
+    for (const im of [this.asphalt, this.walks, this.corners, this.dashes, this.stripes, this.solids, this.deck, this.rails, this.posts, this.piers]) im.instanceMatrix.needsUpdate = true;
     this.paintLoad();
   }
 

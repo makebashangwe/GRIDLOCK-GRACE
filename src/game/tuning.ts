@@ -63,6 +63,9 @@ export const T = {
   crashChance: 0.14,
   crashSelfClear: 150,
 
+  /** Bridge pieces to start with (a crossing of the 2-wide river takes 2). More come from Sunday picks. */
+  startBridges: 4,
+
   /** Avenues: 4 lanes on one tile. Cost in road tiles (a new avenue, or upgrading a street costs the difference),
       speed, and the two lane centers measured from the middle of the road. */
   avenueCost: 2,

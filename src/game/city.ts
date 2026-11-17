@@ -38,24 +38,25 @@ interface Trip { home: Home; type: ShopType; deadline: number; state: 'waiting' 
 
 export type GoalId = 'trips' | 'late' | 'nocrash' | 'hand';
 export interface Goal { id: GoalId; target: number }
-export type UpgradeId = 'roads' | 'lights' | 'round' | 'patience' | 'shop';
+export type UpgradeId = 'roads' | 'lights' | 'round' | 'patience' | 'shop' | 'bridges';
 export const UPGRADES: Record<UpgradeId, { name: string; text: string }> = {
   roads: { name: '+20 road tiles', text: 'More road, right now.' },
   lights: { name: '2 free traffic lights', text: 'Your next two lights cost no road.' },
   round: { name: 'A free roundabout', text: 'Your next roundabout costs no road.' },
   patience: { name: 'Patient drivers', text: 'Every trip gets 15 more minutes before it counts as late.' },
   shop: { name: 'A new shop', text: 'The next shop arrives in your hand now.' },
+  bridges: { name: '+2 bridge pieces', text: 'Enough for one more river crossing.' },
 };
 export interface WeekEnd { week: number; goal: Goal; met: boolean; bonus: number; options: UpgradeId[] }
 
 interface Crash { tile: number; cars: Car[]; since: number; tow: Car | null; pin: HTMLDivElement }
 
-export interface Stats { crashes: number; weekday: number; rush: boolean; sandbox: boolean; earned: number; arrived: number; failed: number; homes: number; shops: number; demand: number; roadTiles: number; day: number; minute: number; over: boolean }
+export interface Stats { bridges: number; crashes: number; weekday: number; rush: boolean; sandbox: boolean; earned: number; arrived: number; failed: number; homes: number; shops: number; demand: number; roadTiles: number; day: number; minute: number; over: boolean }
 
 export class City {
   homes: Home[] = [];
   shops: Shop[] = [];
-  stats: Stats = { crashes: 0, weekday: 0, rush: false, sandbox: false, earned: 0, arrived: 0, failed: 0, homes: 0, shops: 0, demand: 0, roadTiles: T.startRoadTiles, day: 1, minute: T.startMinute, over: false };
+  stats: Stats = { bridges: T.startBridges, crashes: 0, weekday: 0, rush: false, sandbox: false, earned: 0, arrived: 0, failed: 0, homes: 0, shops: 0, demand: 0, roadTiles: T.startRoadTiles, day: 1, minute: T.startMinute, over: false };
   clock = T.startMinute;   // game minutes since day 1 midnight
   /** The hand: the next piece to place is hand[0]. Starts with a grocery and three homes that want it. */
   hand: Piece[] = [{ kind: 'shop', type: 'grocery' }, { kind: 'home', wants: 'grocery' }, { kind: 'home', wants: 'grocery' }, { kind: 'home', wants: 'grocery' }];
@@ -109,7 +110,7 @@ export class City {
 
   /** First direction from a tile that has a road, or a random one. */
   private roadSide(i: number, j: number): number {
-    for (let d = 0; d < 4; d++) if (this.grid.isRoad(i + DX[d], j + DZ[d])) return d;
+    for (let d = 0; d < 4; d++) if (this.grid.connects(i, j, d)) return d;
     return Math.floor(Math.random() * 4);
   }
 
@@ -187,10 +188,10 @@ export class City {
   /** Which road (if any) is in front of the door. Buildings the player hasn't turned face a road by themselves. */
   private connect(b: AnyBuilding): void {
     const g = this.grid;
-    if (!b.turned && !g.isRoad(b.i + DX[b.face], b.j + DZ[b.face])) {
-      for (let d = 0; d < 4; d++) if (g.isRoad(b.i + DX[d], b.j + DZ[d])) { b.face = d; break; }
+    if (!b.turned && !g.connects(b.i, b.j, b.face)) {
+      for (let d = 0; d < 4; d++) if (g.connects(b.i, b.j, d)) { b.face = d; break; }
     }
-    b.access = g.isRoad(b.i + DX[b.face], b.j + DZ[b.face]) ? g.idx(b.i + DX[b.face], b.j + DZ[b.face]) : -1;
+    b.access = g.connects(b.i, b.j, b.face) ? g.idx(b.i + DX[b.face], b.j + DZ[b.face]) : -1;
     const { x, z } = g.center(b.i, b.j);
     b.obj.position.set(x, 0, z); (b.obj.userData as { rot?: number }).rot = FACE_ROT[b.face];
     if ((b.obj.userData as { grow?: number }).grow !== undefined) b.obj.rotation.y = FACE_ROT[b.face];
@@ -291,7 +292,7 @@ export class City {
   private endWeek(week: number): void {
     const met = this.goalMet(), bonus = met ? 15 : 0;
     this.stats.roadTiles += bonus;
-    const pool: UpgradeId[] = ['roads', 'lights', 'round', 'patience', 'shop'];
+    const pool: UpgradeId[] = ['roads', 'lights', 'round', 'patience', 'shop', 'bridges'];
     for (let k = pool.length - 1; k > 0; k--) { const r = Math.floor(Math.random() * (k + 1)); [pool[k], pool[r]] = [pool[r], pool[k]]; }
     const w: WeekEnd = { week, goal: this.goal, met, bonus, options: pool.slice(0, met ? 3 : 2) };
     // next week's goal
@@ -307,6 +308,7 @@ export class City {
     if (u === 'lights') this.tokens.lights += 2;
     if (u === 'round') this.tokens.round += 1;
     if (u === 'patience') this.patience += 15;
+    if (u === 'bridges') this.stats.bridges += 2;
     if (u === 'shop') { const type = SHOP_ORDER[this.shopsDealt++ % SHOP_ORDER.length]; this.hand.unshift({ kind: 'shop', type }); this.onChange(); }
   }
 
@@ -467,7 +469,7 @@ export class City {
     for (let c = 0; c < g.road.length; c++) if (g.road[c]) roads.push(c);
     return {
       v: 1, clock: this.clock, nextGrow: this.nextGrow, nextShop: this.nextShop, shopsDealt: this.shopsDealt,
-      stats: { ...this.stats }, hand: [...this.hand], roads, avenues: roads.filter((c) => g.road[c] === 2), goal: this.goal, week: this.week, tokens: this.tokens, patience: this.patience,
+      stats: { ...this.stats }, hand: [...this.hand], roads, water: [...g.water.keys()].filter((c) => g.water[c]), avenues: roads.filter((c) => g.road[c] === 2), goal: this.goal, week: this.week, tokens: this.tokens, patience: this.patience,
       junctions: roads.filter((c) => g.junction[c]).map((c) => [c, g.junction[c], g.jspent[c]] as [number, number, number]),
       buildings: [...this.homes, ...this.shops].map((b) => ({ kind: b.kind, i: b.i, j: b.j, face: b.face, turned: b.turned, wants: b.kind === 'home' ? b.wants : undefined, type: b.kind === 'shop' ? b.type : undefined })),
     };
@@ -475,6 +477,7 @@ export class City {
 
   load(d: SaveData): void {
     const g = this.grid;
+    if (d.water) { g.water.fill(0); for (const c of d.water) { g.water[c] = 1; this.clearTree(c); } }
     for (const c of d.roads) { g.road[c] = 1; this.clearTree(c); }
     for (const c of d.avenues ?? []) g.road[c] = 2;
     for (const [c, k, spent] of d.junctions ?? []) { g.junction[c] = k; g.jspent[c] = spent ?? 0; }
@@ -495,7 +498,7 @@ export class City {
 export interface SaveData {
   v: 1;
   clock: number; nextGrow: number; nextShop: number; shopsDealt: number;
-  stats: Stats; hand: Piece[]; roads: number[]; avenues?: number[];
+  stats: Stats; hand: Piece[]; roads: number[]; avenues?: number[]; water?: number[];
   junctions?: [number, number, number?][];
   goal?: Goal; week?: { arrived: number; failed: number; crashes: number }; tokens?: { lights: number; round: number }; patience?: number;
   buildings: { kind: 'home' | 'shop'; i: number; j: number; face: number; turned: boolean; wants?: ShopType; type?: ShopType }[];

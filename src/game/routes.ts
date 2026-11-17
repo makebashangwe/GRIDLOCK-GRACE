@@ -20,7 +20,7 @@ export function findRoute(g: Grid, from: number, to: number): number[] | null {
     const [i, j] = g.ij(c);
     for (let d = 0; d < 4; d++) {
       const ni = i + DX[d], nj = j + DZ[d];
-      if (!g.isRoad(ni, nj)) continue;
+      if (!g.connects(i, j, d)) continue;
       const nc = g.idx(ni, nj), av = g.isAvenue(nc), step = (av ? 0.65 : 1) + Math.min(g.load[nc], 8) * (av ? 0.15 : 0.35);
       if (cost[c] + step < cost[nc]) { cost[nc] = cost[c] + step; prev[nc] = c; open.push(nc); }
     }
