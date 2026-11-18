@@ -153,6 +153,7 @@ export class City {
   /** Called Sunday night when a week ends; the game waits for the player to pick an upgrade. */
   onWeekEnd: (w: WeekEnd) => void = () => {};
 
+  private towDealtAt = 0;
   /** Crashes waiting for the tow truck. */
   private crashes: Crash[] = [];
 
@@ -554,8 +555,13 @@ export class City {
   /** Send a delivery truck from the highway to any shop running low. */
   private updateDeliveries(): void {
     const g = this.grid;
-    for (const shop of this.shops) {
-      if (!stocked(shop.type) || shop.truck || shop.stock >= T.restockAt) continue;
+    // only so many trucks at once, neediest shop first, so deliveries don't flood the streets
+    const stockedShops = this.shops.filter((s) => stocked(s.type));
+    let onRoad = stockedShops.filter((s) => s.truck).length;
+    const cap = T.maxTrucks + Math.floor(stockedShops.length / T.deliveriesPerShops);
+    for (const shop of [...stockedShops].sort((a, b) => a.stock - b.stock)) {
+      if (onRoad >= cap) break;
+      if (shop.truck || shop.stock >= T.restockAt) continue;
       // trucks come in at the nearest highway connection the shop can be reached from
       let route: number[] | null = null, from = -1;
       if (shop.access >= 0) for (const e of g.entries) {
@@ -569,6 +575,7 @@ export class City {
       const pts = lanePath(g, [...route, g.idx(shop.i, shop.j)]);
       if (!this.traffic.canStart(pts)) continue;
       const truck = M.makeDeliveryTruck(SHOP_INFO[shop.type].color) as THREE.Object3D; shadowAll(truck); truck.scale.setScalar(0.85);
+      onRoad++;
       shop.truck = this.traffic.addSpecial(pts, truck, () => {
         shop.stock = T.stockMax; shop.truck = null; shop.warned = false;
         const back = shop.access >= 0 && g.road[from] ? findRoute(g, shop.access, from) : null;
@@ -636,9 +643,12 @@ export class City {
     for (const car of [a, b]) { const trip = this.carTrip.get(car); if (trip && !trip.failed) this.fail(trip, 'crash'); }
     const pin = document.createElement('div'); pin.className = 'pin crash'; pin.innerHTML = '<b>!</b>Crash'; this.pinLayer.appendChild(pin);
     this.crashes.push({ tile, cars: [a, b], since: this.clock, tow: null, pin });
-    const hasTow = this.shops.some((s) => s.type === 'tow') || this.hand.some((p) => p.kind === 'shop' && p.type === 'tow');
-    this.onEvent(hasTow ? 'Crash! Hook & Haul is on the way' : 'Crash! Hook & Haul wants to open in your town: place it to clear crashes fast', 'bad');
-    if (!hasTow) this.hand.unshift({ kind: 'shop', type: 'tow' });
+    const towInHand = this.hand.some((p) => p.kind === 'shop' && p.type === 'tow'), towShops = this.shops.filter((s) => s.type === 'tow').length;
+    // a new Hook & Haul with the first crash, then another after every few crashes so every part of town has one nearby
+    const deal = !towInHand && (towShops === 0 || this.stats.crashes - this.towDealtAt >= T.crashesPerTow);
+    if (deal) { this.towDealtAt = this.stats.crashes; this.hand.unshift({ kind: 'shop', type: 'tow' }); }
+    this.onEvent(deal ? (towShops ? 'Crash! Another Hook & Haul wants to open: put it where crashes keep happening' : 'Crash! Hook & Haul wants to open in your town: place it to clear crashes fast')
+      : towShops ? 'Crash! Hook & Haul is on the way' : 'Crash! Place Hook & Haul from your hand to clear it', 'bad');
     this.onChange();
   }
 

@@ -66,7 +66,7 @@ export const T = {
   /** Crashes: chance that a near miss at a crossing with no control becomes a crash, and how long a crash
       blocks the road (game minutes) when no tow truck can reach it. */
   crashChance: 0.14,
-  crashSelfClear: 150,
+  crashSelfClear: 70,
 
   /** Shop stock: each customer uses some; below restockAt a delivery truck comes from the highway.
       An empty shop turns customers away (their trip counts as late). */
@@ -97,6 +97,14 @@ export const T = {
   avenueCost: 2,
   avenueSpeed: 14,
   avenueLanes: [1.7, 4.3] as [number, number],
+
+  /** Don't block the box: cars wait before a crossing when the tile past it has this many cars. */
+  boxFull: 3,
+  /** Delivery trucks on the road at once: this many, plus one per deliveriesPerShops shops. */
+  maxTrucks: 2,
+  deliveriesPerShops: 5,
+  /** Another Hook & Haul is dealt after this many crashes since the last one. */
+  crashesPerTow: 4,
 
   /** Road colors: cars on one tile at once before it shows as slow (amber) and jammed (red). */
   slowAt: 3,

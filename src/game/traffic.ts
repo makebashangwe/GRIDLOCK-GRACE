@@ -126,6 +126,13 @@ export class Traffic {
     const l = Math.hypot(b.x - a.x, b.z - a.z); if (l > 0.01) { c.hx = (b.x - a.x) / l; c.hz = (b.z - a.z) / l; }
   }
   private segEnd(c: Car, seg: number): number { return c.cum[seg]; }
+  /** Where a car will be after driving to distance s along its path. */
+  private pointAt(c: Car, s: number): [number, number] {
+    if (s >= c.total) { const p = c.pts[c.pts.length - 1]; return [p.x, p.z]; }
+    let k = c.seg; while (k < c.lens.length - 1 && c.cum[k] < s) k++;
+    const start = c.cum[k] - c.lens[k], u = c.lens[k] > 0 ? (s - start) / c.lens[k] : 0, a = c.pts[k], b = c.pts[k + 1];
+    return [a.x + (b.x - a.x) * u, a.z + (b.z - a.z) * u];
+  }
 
   /** What a crossing ahead asks of this car: true = hold before entering it. */
   private holdAtCrossing(c: Car, clock: number, dt: number): boolean {
@@ -133,6 +140,14 @@ export class Traffic {
     const [ci, cj] = g.tileAt(c.x, c.z), [ai, aj] = g.tileAt(c.x + c.hx * 5.5, c.z + c.hz * 5.5);
     if (!g.inside(ai, aj) || (ai === ci && aj === cj)) return false;
     const ahead = g.idx(ai, aj), kind = g.control(ahead);
+    // don't block the box: wait before a crossing if the road just past it is backed up
+    if (g.isCrossing(ahead) && c.stuck < 6) {
+      const [ex, ez] = this.pointAt(c, c.s + 5.5 + 15), [xi, xj] = g.tileAt(ex, ez);
+      if (g.inside(xi, xj)) {
+        const exit = g.idx(xi, xj);
+        if (exit !== ahead && g.road[exit] && g.load[exit] >= T.boxFull) { c.stuck += dt; return true; }
+      }
+    }
     if (kind === J_STOP) {
       if (c.stoppedFor === ahead) return false;
       if (c.v < 0.4) { c.wait += dt; if (c.wait >= T.stopWait) { c.stoppedFor = ahead; c.wait = 0; return false; } }
@@ -169,7 +184,8 @@ export class Traffic {
       for (const o of c.ghost ? [] : this.near(c.x, c.z)) {
         if (o === c || o.ghost) continue;
         const dx = o.x - c.x, dz = o.z - c.z, along = dx * c.hx + dz * c.hz;
-        if (along <= 0.2 || along > T.followGap) continue;
+        const gap = T.followGap + (o.special ? 3.5 : 0) + (c.special ? 1.5 : 0);   // trucks and buses are longer
+        if (along <= 0.2 || along > gap) continue;
         const side = Math.abs(dx * -c.hz + dz * c.hx);
         if (o.crashed && side < 2.8) { blocked = true; break; }   // a crash blocks everyone
         if (side > 1.9) continue;
