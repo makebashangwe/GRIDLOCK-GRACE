@@ -23,6 +23,9 @@ Gridlock & Grace: cozy isometric city-builder. Traffic puzzle first (v0.1), then
 - Use `grid.connects(i, j, d)` for any road-to-road check: it applies the water rule (bridges only connect east-west).
 - `grid.entries` are the highway connections, one per edge (`grid.placeEntries()`, moved off the river): always road, can't be erased; delivery trucks enter at the nearest. `grid.entry` is the west one.
 
+- Highways are a second level: `grid.hwy`. Route nodes are cell `c` on the street and `c + n*n` on the deck (`isHigh`, `cellOf` in routes.ts); lane points carry `y`. A highway tile with one highway neighbor is a ramp (`grid.rampDir`); `fixRamps()` clears any street under a ramp when a drag ends.
+- The A* estimate counts tiles at the cheapest (highway) step price so it never overshoots; keep it that way if costs change.
+
 ## Still to port from the Asset Test
 - Meshy GLB fixes: zero-length normal repair, texture recolor (police station navy to teal, house roof variants), texture shrinking.
 - Crowd system (`makeCrowd` / `citizenLook`), weather (rain and snow with the height snapshot), crash scene, ghost road, city depot.

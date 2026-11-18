@@ -23,6 +23,8 @@ export interface Car {
   seg: number;
   v: number;
   x: number; z: number; hx: number; hz: number;
+  /** Height (on a highway or ramp) and nose-up tilt on ramps. */
+  y: number; pitch: number;
   paint: number;
   onArrive: () => void;
   /** The crossing this car has already made its full stop for. */
@@ -73,7 +75,7 @@ export class Traffic {
   private paintIM: THREE.InstancedMesh;
   private restIM: THREE.InstancedMesh;
   private M = new THREE.Matrix4(); private Q = new THREE.Quaternion(); private V = new THREE.Vector3(); private S = new THREE.Vector3(1, 1, 1);
-  private UP = new THREE.Vector3(0, 1, 0); private col = new THREE.Color();
+  private col = new THREE.Color(); private E = new THREE.Euler();
   private hash = new Map<number, Car[]>();
 
   constructor(private scene: THREE.Scene, private grid: Grid) {
@@ -95,7 +97,7 @@ export class Traffic {
     const lens: number[] = [], cum: number[] = []; let total = 0;
     for (let k = 0; k < pts.length - 1; k++) { const l = Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].z - pts[k].z); lens.push(l); total += l; cum.push(total); }
     const id = this.nextId++;
-    const car: Car = { id, pts, lens, cum, total, s: 0, seg: 0, v: 0, x: pts[0].x, z: pts[0].z, hx: 1, hz: 0, paint: id % PAINTS.length, onArrive, stoppedFor: -1, wait: 0, crashed: false, jitter: 0, tile: -1, stuck: 0 };
+    const car: Car = { id, pts, lens, cum, total, s: 0, seg: 0, v: 0, x: pts[0].x, z: pts[0].z, y: pts[0].y ?? 0, pitch: 0, hx: 1, hz: 0, paint: id % PAINTS.length, onArrive, stoppedFor: -1, wait: 0, crashed: false, jitter: 0, tile: -1, stuck: 0 };
     this.place(car); this.cars.push(car); return car;
   }
 
@@ -122,8 +124,9 @@ export class Traffic {
     while (c.seg < c.lens.length - 1 && c.s > this.segEnd(c, c.seg)) c.seg++;
     const start = this.segEnd(c, c.seg) - c.lens[c.seg], u = c.lens[c.seg] > 0 ? (c.s - start) / c.lens[c.seg] : 0;
     const a = c.pts[c.seg], b = c.pts[c.seg + 1];
-    c.x = a.x + (b.x - a.x) * u; c.z = a.z + (b.z - a.z) * u;
-    const l = Math.hypot(b.x - a.x, b.z - a.z); if (l > 0.01) { c.hx = (b.x - a.x) / l; c.hz = (b.z - a.z) / l; }
+    const ay = a.y ?? 0, by = b.y ?? 0;
+    c.x = a.x + (b.x - a.x) * u; c.z = a.z + (b.z - a.z) * u; c.y = ay + (by - ay) * u;
+    const l = Math.hypot(b.x - a.x, b.z - a.z); if (l > 0.01) { c.hx = (b.x - a.x) / l; c.hz = (b.z - a.z) / l; c.pitch = Math.atan2(by - ay, l); }
   }
   private segEnd(c: Car, seg: number): number { return c.cum[seg]; }
   /** Where a car will be after driving to distance s along its path. */
@@ -167,13 +170,14 @@ export class Traffic {
   /** Move every car by dt real seconds (already scaled for game speed). clock = game minutes (for traffic lights). */
   update(dt: number, clock = 0): void {
     const g = this.grid;
-    this.hash.clear(); g.load.fill(0);
+    this.hash.clear(); g.load.fill(0); g.hload.fill(0);
     for (const c of this.cars) {
       const k = this.key(c.x, c.z); let l = this.hash.get(k); if (!l) this.hash.set(k, (l = [])); l.push(c);
       const [i, j] = g.tileAt(c.x, c.z);
       if (g.inside(i, j)) {
-        const t = g.idx(i, j); g.load[t]++;
-        if (t !== c.tile) { c.tile = t; if (g.road[t] && !c.ghost) g.wear[t] += c.special ? 3 : 1; }   // each pass wears the road a little
+        const t = g.idx(i, j), up = c.y > 1;
+        if (up) g.hload[t]++; else g.load[t]++;
+        if (t !== c.tile) { c.tile = t; if (!up && g.road[t] && !c.ghost) g.wear[t] += c.special ? 3 : 1; }   // each pass wears the street a little
       }
     }
     const arrived: Car[] = [];
@@ -182,7 +186,7 @@ export class Traffic {
       if (c.crashed) continue;
       let blocked = false, yielding = false;
       for (const o of c.ghost ? [] : this.near(c.x, c.z)) {
-        if (o === c || o.ghost) continue;
+        if (o === c || o.ghost || Math.abs(o.y - c.y) > 2.2) continue;   // a car on the deck and one below don't meet
         const dx = o.x - c.x, dz = o.z - c.z, along = dx * c.hx + dz * c.hz;
         const gap = T.followGap + (o.special ? 3.5 : 0) + (c.special ? 1.5 : 0);   // trucks and buses are longer
         if (along <= 0.2 || along > gap) continue;
@@ -195,17 +199,17 @@ export class Traffic {
       }
       if (yielding) c.stuck += dt; else if (c.v > 2) c.stuck = 0;   // after 2.5 s of giving way, go anyway, until moving again
       if (c.hold) { blocked = true; c.hold = false; }
-      if (!blocked && !c.ghost && this.holdAtCrossing(c, clock, dt)) blocked = true;
-      const [ti, tj] = g.tileAt(c.x, c.z), inRound = g.inside(ti, tj) && g.control(g.idx(ti, tj)) === J_ROUND;
-      const onAvenue = g.inside(ti, tj) && g.isAvenue(g.idx(ti, tj));
-      const onHole = g.inside(ti, tj) && g.pothole[g.idx(ti, tj)] === 1;
-      const top = onHole && !c.ghost ? T.potholeSpeed : c.special && !c.ghost && !c.bus ? T.truckSpeed : onAvenue && !c.special ? T.avenueSpeed : T.carSpeed;
+      if (!blocked && !c.ghost && c.y < 0.5 && this.holdAtCrossing(c, clock, dt)) blocked = true;
+      const [ti, tj] = g.tileAt(c.x, c.z), low = c.y < 1, inRound = low && g.inside(ti, tj) && g.control(g.idx(ti, tj)) === J_ROUND;
+      const onAvenue = low && g.inside(ti, tj) && g.isAvenue(g.idx(ti, tj));
+      const onHole = low && g.inside(ti, tj) && g.pothole[g.idx(ti, tj)] === 1;
+      const top = c.y > 3 ? T.hwySpeed : onHole && !c.ghost ? T.potholeSpeed : c.special && !c.ghost && !c.bus ? T.truckSpeed : onAvenue && !c.special ? T.avenueSpeed : T.carSpeed;
       const want = blocked ? 0 : inRound ? T.roundSpeed : top;
       c.v += Math.max(-T.carAccel * 2.5 * dt, Math.min(T.carAccel * dt, want - c.v));
       c.s += c.v * dt;
       if (c.s >= c.total) { arrived.push(c); continue; }
       this.place(c);
-      if (!c.special && c.v > 4 && g.inside(ti, tj) && !g.control(g.idx(ti, tj)) && g.isCrossing(g.idx(ti, tj))) this.checkCrash(c, g.idx(ti, tj));
+      if (!c.special && c.v > 4 && c.y < 0.5 && g.inside(ti, tj) && !g.control(g.idx(ti, tj)) && g.isCrossing(g.idx(ti, tj))) this.checkCrash(c, g.idx(ti, tj));
     }
     for (const c of arrived) { this.remove(c); c.onArrive(); }
     this.draw();
@@ -215,7 +219,7 @@ export class Traffic {
   private checkCrash(c: Car, tile: number): void {
     const g = this.grid;
     for (const o of this.near(c.x, c.z)) {
-      if (o === c || o.crashed || o.special || o.v < 3) continue;
+      if (o === c || o.crashed || o.special || o.v < 3 || o.y > 0.5) continue;
       if ((o.x - c.x) ** 2 + (o.z - c.z) ** 2 > 13) continue;
       if (Math.abs(o.hx * c.hx + o.hz * c.hz) > 0.5) continue;   // only paths that cross
       const [oi, oj] = g.tileAt(o.x, o.z); if (g.idx(oi, oj) !== tile) continue;
@@ -236,9 +240,9 @@ export class Traffic {
   private draw(): void {
     let k = 0;
     for (const c of this.cars) {
-      if (c.special) { c.special.position.set(c.x, 0.05, c.z); c.special.rotation.y = Math.atan2(-c.hz, c.hx); continue; }
-      this.Q.setFromAxisAngle(this.UP, Math.atan2(-c.hz, c.hx) + c.jitter);
-      this.M.compose(this.V.set(c.x, 0.05, c.z), this.Q, this.S);
+      if (c.special) { c.special.position.set(c.x, c.y + 0.05, c.z); c.special.rotation.set(0, Math.atan2(-c.hz, c.hx), c.pitch, 'YXZ'); continue; }
+      this.Q.setFromEuler(this.E.set(0, Math.atan2(-c.hz, c.hx) + c.jitter, c.pitch, 'YXZ'));
+      this.M.compose(this.V.set(c.x, c.y + 0.05, c.z), this.Q, this.S);
       this.paintIM.setMatrixAt(k, this.M); this.restIM.setMatrixAt(k, this.M);
       this.paintIM.setColorAt(k, this.col.set(PAINTS[c.paint]));
       k++;

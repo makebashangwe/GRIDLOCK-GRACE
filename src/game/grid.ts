@@ -35,6 +35,10 @@ export class Grid {
   readonly entryDir: number[];
   /** Wear from traffic per tile, and potholes (1 = pothole). */
   readonly wear: Float32Array;
+  /** Elevated highway tiles (a second level above the ground), and cars on each. A highway tile with one
+      highway neighbor is a ramp: it slopes down to the ground on its open side. */
+  readonly hwy: Uint8Array;
+  readonly hload: Uint16Array;
   readonly pothole: Uint8Array;
   /** Road tiles actually spent on each crossing's control (free upgrade tokens spend none). */
   readonly jspent: Uint8Array;
@@ -50,6 +54,8 @@ export class Grid {
     this.entry = this.idx(0, Math.floor(this.n / 2));
     this.entries = [this.entry]; this.entryDir = [2];
     this.wear = new Float32Array(size);
+    this.hwy = new Uint8Array(size);
+    this.hload = new Uint16Array(size);
     this.pothole = new Uint8Array(size);
     this.jspent = new Uint8Array(size);
   }
@@ -60,7 +66,7 @@ export class Grid {
   /** Road tiles hold 1 for a street, 2 for an avenue. */
   isRoad(i: number, j: number): boolean { return this.inside(i, j) && this.road[this.idx(i, j)] > 0; }
   isAvenue(c: number): boolean { return this.road[c] === 2; }
-  isFree(i: number, j: number): boolean { const c = this.idx(i, j); return this.inside(i, j) && !this.road[c] && !this.building[c] && !this.water[c]; }
+  isFree(i: number, j: number): boolean { const c = this.idx(i, j); return this.inside(i, j) && !this.road[c] && !this.building[c] && !this.water[c] && !this.hwy[c]; }
   isBridge(c: number): boolean { return this.road[c] > 0 && this.water[c] === 1; }
   /** Can traffic go from tile (i, j) to its neighbor in direction d? (Bridges only connect east and west.) */
   connects(i: number, j: number, d: number): boolean {
@@ -87,6 +93,19 @@ export class Grid {
       while (this.water[this.idx(a, j)] && a > 1) a--;
       this.entries.push(this.idx(a, j)); this.entryDir.push(dirs[k]);
     });
+  }
+  /** Bit mask of highway neighbors of tile c. */
+  hwyLinks(c: number): number {
+    const [i, j] = this.ij(c); let m = 0;
+    for (let d = 0; d < 4; d++) { const ni = i + DX[d], nj = j + DZ[d]; if (this.inside(ni, nj) && this.hwy[this.idx(ni, nj)]) m |= 1 << d; }
+    return m;
+  }
+  /** If tile c is a ramp, the direction its low (ground) end faces; otherwise -1. */
+  rampDir(c: number): number {
+    if (!this.hwy[c]) return -1;
+    const m = this.hwyLinks(c);
+    for (let d = 0; d < 4; d++) if (m === 1 << d) return (d + 2) % 4;
+    return -1;
   }
   isEntry(c: number): boolean { return this.entries.includes(c); }
 

@@ -5,6 +5,8 @@ import { createStage } from './engine/stage';
 import { runTicks } from './engine/tick';
 import { Grid } from './game/grid';
 import { RoadView } from './game/roadView';
+import { HighwayView } from './game/highwayView';
+import { findRoute } from './game/routes';
 import { TerrainView, makeRiver } from './game/terrain';
 import { makeOnRampEntranceSign } from './assets/models';
 import { shadowAll } from './assets/core';
@@ -55,12 +57,13 @@ setInterval(saveNow, 5000);
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
 window.addEventListener('pagehide', saveNow);
 const junctions = new JunctionView(scene, grid);
+const highways = new HighwayView(scene, grid); highways.rebuild();
 roads.rebuild(); junctions.sync(); roads.syncPotholes(scene);
 city.onHoles = () => roads.syncPotholes(scene);
 cam.target.set(0, 0, 0); cam.zoom = cam.goalZoom = 1.15;
 
 /* ---------- drawing roads ---------- */
-type Tool = 'road' | 'avenue' | 'bus' | 'place' | 'turn' | 'junction' | 'erase' | 'move' | 'rotate';
+type Tool = 'road' | 'avenue' | 'highway' | 'bus' | 'place' | 'turn' | 'junction' | 'erase' | 'move' | 'rotate';
 let tool: Tool = 'road';
 const ghostMat = new THREE.MeshBasicMaterial({ color: '#4E8FA6', transparent: true, opacity: 0.4, depthWrite: false });
 const ghost = new THREE.Mesh(new THREE.PlaneGeometry(T.tile - 0.6, T.tile - 0.6).rotateX(-Math.PI / 2), ghostMat);
@@ -77,6 +80,17 @@ function canPlace(i: number, j: number) {
   if (grid.inside(i, j) && grid.water[c] && !grid.road[c]) return city.stats.bridges > 0;   // a bridge piece
   return grid.isFree(i, j) && city.stats.roadTiles > 0;
 }
+/* ---------- highway ramps ---------- */
+/** A ramp slopes down onto its own tile, so any street on that tile is cleared (and refunded). */
+function fixRamps(): void {
+  let cleared = 0;
+  for (let c = 0; c < grid.hwy.length; c++) {
+    if (grid.rampDir(c) < 0 || !grid.road[c] || grid.water[c] || grid.isEntry(c)) continue;
+    city.stats.roadTiles += grid.road[c] + grid.jspent[c]; grid.road[c] = 0; grid.junction[c] = J_NONE; grid.jspent[c] = 0; cleared++;
+  }
+  if (cleared) toast('A ramp needs its own tile: the street under it was cleared and refunded', 'bad');
+}
+
 /* ---------- crossings: stop sign -> traffic light -> roundabout -> nothing ---------- */
 const J_INFO: Record<number, { name: string; note: string }> = {
   [J_NONE]: { name: 'No control', note: 'fast, but busy crossings get messy' },
@@ -117,8 +131,14 @@ function apply(i: number, j: number): boolean {
     city.clearTree(c); grid.road[c] = 2; city.stats.roadTiles -= cost;
     return true;
   }
+  if (tool === 'highway') {
+    if (grid.hwy[c] || grid.building[c] || !grid.inside(i, j) || grid.isEntry(c) || city.stats.roadTiles < T.hwyCost) return false;
+    city.clearTree(c); grid.hwy[c] = 1; city.stats.roadTiles -= T.hwyCost;
+    return true;
+  }
   if (tool === 'erase') {
     if (grid.building[c]) { city.remove(i, j); return true; }
+    if (grid.hwy[c]) { grid.hwy[c] = 0; city.stats.roadTiles += T.hwyCost; return true; }   // the deck comes off first
     if (!grid.road[c]) return false;
     if (city.stopAt(c)) city.stats.roadTiles += T.stopCost;   // a stop on this road comes back too
     if (grid.isEntry(c)) { toast('That road is a highway connection: delivery trucks come in there', 'bad'); return false; }
@@ -140,7 +160,7 @@ function paintTo(to: [number, number]) {
       stroke = [i, j];
     }
   }
-  if (changed) { roads.rebuild(); junctions.sync(); city.roadsChanged(); }
+  if (changed) { roads.rebuild(); junctions.sync(); highways.rebuild(); city.roadsChanged(); }
 }
 const canvas = stage.renderer.domElement;
 // Move and Rotate tools: one-finger / left-drag pans or orbits (for phones and trackpads)
@@ -168,20 +188,24 @@ canvas.addEventListener('pointermove', (e) => {
   if (tool === 'move') { ghost.visible = false; hintAt(e, city.homeInfo(...t)); return; }
   const { x, z } = grid.center(...t); ghost.position.x = x; ghost.position.z = z;
   const c = grid.idx(...t);
-  const ok = tool === 'road' ? canPlace(...t) : tool === 'avenue' ? (grid.road[c] === 1 && city.stats.roadTiles >= T.avenueCost - 1) || (grid.isFree(...t) && city.stats.roadTiles >= T.avenueCost) : tool === 'place' ? grid.isFree(...t) && city.hand.length > 0
+  const ok = tool === 'highway' ? !grid.hwy[c] && !grid.building[c] && !grid.isEntry(c) && city.stats.roadTiles >= T.hwyCost : tool === 'road' ? canPlace(...t) : tool === 'avenue' ? (grid.road[c] === 1 && city.stats.roadTiles >= T.avenueCost - 1) || (grid.isFree(...t) && city.stats.roadTiles >= T.avenueCost) : tool === 'place' ? grid.isFree(...t) && city.hand.length > 0
     : tool === 'bus' ? !!grid.road[c] && !grid.water[c] : tool === 'turn' ? !!grid.building[c] : tool === 'junction' ? grid.isCrossing(c) : !!grid.building[c] || grid.isRoad(...t);
   ghostMat.color.set(tool === 'erase' ? '#C8553D' : ok ? (tool === 'place' ? pieceColor() : '#4E8FA6') : '#C8553D'); ghostMat.opacity = ok ? 0.42 : 0.22;
   const info = (tool === 'turn' || tool === 'erase' || tool === 'place') ? city.homeInfo(...t) : '';
   if (info && !(tool === 'place' && ok)) { hintAt(e, info); return; }
-  hintAt(e, tool === 'bus' && ok ? (city.stopAt(c) ? (city.stopAt(c) === city.lines[city.current] ? 'Remove this stop' : 'Stop on another line: click to switch to it') : `Add a stop · ${T.stopCost} road tile · homes and shops within ${T.busWalk} tiles can ride`) : tool === 'road' && ok && grid.water[c] ? `Bridge · uses 1 of your ${city.stats.bridges} bridge pieces · crosses east-west` : tool === 'avenue' && ok ? (grid.road[c] === 1 ? `Upgrade to avenue · ${T.avenueCost - 1} road tile` : `Avenue · ${T.avenueCost} road tiles`) : tool === 'place' && ok ? placeHint(...t) : tool === 'junction' && ok ? `Next: ${J_INFO[nextJunction(grid.junction[c])].name} · ${J_INFO[nextJunction(grid.junction[c])].note}` : '');
+  hintAt(e, tool === 'highway' && ok ? `Elevated highway · ${T.hwyCost} road tiles · it can pass over streets; each end becomes a ramp down to the street beyond it` : tool === 'bus' && ok ? (city.stopAt(c) ? (city.stopAt(c) === city.lines[city.current] ? 'Remove this stop' : 'Stop on another line: click to switch to it') : `Add a stop · ${T.stopCost} road tile · homes and shops within ${T.busWalk} tiles can ride`) : tool === 'road' && ok && grid.water[c] ? `Bridge · uses 1 of your ${city.stats.bridges} bridge pieces · crosses east-west` : tool === 'avenue' && ok ? (grid.road[c] === 1 ? `Upgrade to avenue · ${T.avenueCost - 1} road tile` : `Avenue · ${T.avenueCost} road tiles`) : tool === 'place' && ok ? placeHint(...t) : tool === 'junction' && ok ? `Next: ${J_INFO[nextJunction(grid.junction[c])].name} · ${J_INFO[nextJunction(grid.junction[c])].note}` : '');
   if (stroke && (e.buttons & 1)) paintTo(t);
 });
-const endStroke = () => { stroke = null; toolDrag = null; };
+const endStroke = () => {
+  // ramps are settled when the drag ends (mid-drag, the highway's moving end would clear every street it crossed)
+  if (stroke && tool === 'highway') { fixRamps(); roads.rebuild(); junctions.sync(); highways.rebuild(); city.roadsChanged(); }
+  stroke = null; toolDrag = null;
+};
 canvas.addEventListener('pointerleave', () => hintAt(null, ''));
 canvas.addEventListener('pointerup', endStroke); canvas.addEventListener('pointercancel', endStroke);
 canvas.addEventListener('pointerleave', () => (ghost.visible = false));
 
-const TOOLS: [Tool, string][] = [['road', 'toolRoad'], ['avenue', 'toolAvenue'], ['bus', 'toolBus'], ['place', 'toolPlace'], ['turn', 'toolTurn'], ['junction', 'toolJunction'], ['erase', 'toolErase'], ['move', 'toolMove'], ['rotate', 'toolRotate']];
+const TOOLS: [Tool, string][] = [['road', 'toolRoad'], ['avenue', 'toolAvenue'], ['highway', 'toolHighway'], ['bus', 'toolBus'], ['place', 'toolPlace'], ['turn', 'toolTurn'], ['junction', 'toolJunction'], ['erase', 'toolErase'], ['move', 'toolMove'], ['rotate', 'toolRotate']];
 function setTool(t: Tool) { tool = t; $('busPanel').style.display = t === 'bus' ? 'flex' : 'none'; if (t === 'bus') drawLines(); for (const [k, id] of TOOLS) $(id).classList.toggle('on', k === t); if (t !== 'place') hintAt(null, ''); }
 for (const [k, id] of TOOLS) $(id).onclick = () => setTool(k);
 $('zoomIn').onclick = () => (cam.goalZoom = Math.min(9, cam.goalZoom * 1.35)); $('zoomOut').onclick = () => (cam.goalZoom = Math.max(0.15, cam.goalZoom / 1.35));
@@ -243,6 +267,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 't' || e.key === 'T') setTool('turn');
   if (e.key === 'v' || e.key === 'V') setTool('avenue');
   if (e.key === 'b' || e.key === 'B') setTool('bus');
+  if (e.key === 'h' || e.key === 'H') setTool('highway');
   if (e.key === 'j' || e.key === 'J') setTool('junction');
   if (e.key === 'x' || e.key === 'X') setTool('erase');
   if (e.key === 'm' || e.key === 'M') setTool('move');
@@ -333,4 +358,4 @@ function loop(now: number) {
 }
 requestAnimationFrame(loop);
 setTool('place'); setSpeed(1);
-(window as unknown as { __game: unknown }).__game = { city, grid, traffic, cam, roads, junction: (i: number, j: number) => cycleJunction(i, j), bus: (i: number, j: number) => busClick(i, j), avenue: (i: number, j: number) => { const was = tool; tool = 'avenue'; apply(i, j); tool = was; roads.rebuild(); junctions.sync(); city.roadsChanged(); }, endWeek: () => { city.clock = (Math.floor(city.clock / 1440 / 7) + 1) * 7 * 1440 - 1; }, paint: (i: number, j: number) => { const was = tool; tool = 'road'; apply(i, j); tool = was; roads.rebuild(); junctions.sync(); city.roadsChanged(); } };
+(window as unknown as { __game: unknown }).__game = { findRoute: (a: number, b: number) => findRoute(grid, a, b), fixRamps, city, grid, traffic, cam, roads, junction: (i: number, j: number) => cycleJunction(i, j), highway: (i: number, j: number) => { const was = tool; tool = 'highway'; apply(i, j); tool = was; roads.rebuild(); junctions.sync(); highways.rebuild(); city.roadsChanged(); }, bus: (i: number, j: number) => busClick(i, j), avenue: (i: number, j: number) => { const was = tool; tool = 'avenue'; apply(i, j); tool = was; roads.rebuild(); junctions.sync(); city.roadsChanged(); }, endWeek: () => { city.clock = (Math.floor(city.clock / 1440 / 7) + 1) * 7 * 1440 - 1; }, paint: (i: number, j: number) => { const was = tool; tool = 'road'; apply(i, j); tool = was; roads.rebuild(); junctions.sync(); city.roadsChanged(); } };

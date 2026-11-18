@@ -2,7 +2,7 @@
 
 A cozy isometric city-builder in the browser: a traffic puzzle (draw roads, watch cars find their way) that grows into a living city you run as mayor. Built with three.js and TypeScript.
 
-**Status:** v0.1 and v0.2 done (avenues, a river with bridges, delivery trucks from the highway, and potholes fixed by the City Depot. You build from a blank map: homes and shops arrive in your hand and you choose where each goes (each home wants a shop; closer is better), turn buildings so their doors face a road, and draw roads from a daily tile budget. Cars route and queue. Weekday rush hours, day and night. Crossings can get a stop sign, traffic light or roundabout; uncontrolled busy crossings have crashes that Hook & Haul's tow truck clears. Each week has a goal and ends with a pick-one upgrade. Gridlock offers to keep building in Sandbox, and the town autosaves.). v0.3 in progress: homes grow from cottage to tower.
+**Status:** v0.1 and v0.2 done (avenues, a river with bridges, delivery trucks from the highway, and potholes fixed by the City Depot. You build from a blank map: homes and shops arrive in your hand and you choose where each goes (each home wants a shop; closer is better), turn buildings so their doors face a road, and draw roads from a daily tile budget. Cars route and queue. Weekday rush hours, day and night. Crossings can get a stop sign, traffic light or roundabout; uncontrolled busy crossings have crashes that Hook & Haul's tow truck clears. Each week has a goal and ends with a pick-one upgrade. Gridlock offers to keep building in Sandbox, and the town autosaves.). v0.3 done: homes grow from cottage to tower, bus lines, and an elevated highway with ramps.
 
 ## Run it
 
@@ -24,6 +24,7 @@ src/game/routes.ts           A* routing and lane paths
 src/game/traffic.ts          instanced cars, following, crossing rules (stop / light / roundabout), crashes, tow truck
 src/game/junctions.ts        stop signs, signals and roundabout islands on crossings
 src/game/terrain.ts          ground tiles, the river and its banks, river generator
+src/game/highwayView.ts      the elevated highway: deck, railings, ramps, pillars
 src/game/city.ts             the hand of pieces, placing/turning/removing buildings, trips, deadlines, game over
 gallery.html, src/gallery.ts asset gallery: every model in rows, flags any that fail to build
 src/engine/stage.ts          renderer, warm lighting, angled orthographic camera and controls

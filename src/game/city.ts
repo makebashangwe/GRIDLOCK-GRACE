@@ -280,7 +280,11 @@ export class City {
       const trip = this.carTrip.get(car); if (!trip) continue;
       const pts = car.pts, g = this.grid;
       let broken = false;
-      for (let k = 1; k < pts.length - 1 && !broken; k++) { const [i, j] = g.tileAt(pts[k].x, pts[k].z); if (!g.isRoad(i, j)) broken = true; }
+      for (let k = 1; k < pts.length - 1 && !broken; k++) {
+        const [i, j] = g.tileAt(pts[k].x, pts[k].z); if (!g.inside(i, j)) { broken = true; break; }
+        const up = (pts[k].y ?? 0) > 1, c = g.idx(i, j);
+        if (up ? !g.hwy[c] : !g.isRoad(i, j) && !g.hwy[c]) broken = true;   // a ramp tile carries cars on its slope
+      }
       if (!broken) continue;
       this.traffic.remove(car); this.carTrip.delete(car);
       if (trip.state === 'out') { trip.state = 'waiting'; trip.car = null; } else if (trip.state === 'back') this.finish(trip);
@@ -492,7 +496,7 @@ export class City {
     for (const stop of l.stops) {
       while (p < pts.length - 1) {
         const [i, j] = g.tileAt(pts[p].x, pts[p].z);
-        if (g.inside(i, j) && g.idx(i, j) === stop) break;
+        if (g.inside(i, j) && g.idx(i, j) === stop && (pts[p].y ?? 0) < 1) break;   // on the street, not passing overhead
         sAt += Math.hypot(pts[p + 1].x - pts[p].x, pts[p + 1].z - pts[p].z); p++;
       }
       stopS.push(sAt);
@@ -769,7 +773,7 @@ export class City {
       // a trip's timer rides on its car while it's driving, so you can follow it through traffic
       const t = b.kind === 'home' ? pinTrip(b) : null, car = t?.state === 'out' ? t.car : t?.state === 'ride' ? t.bus?.run?.car : null;
       const { x, z } = car ? { x: car.x, z: car.z } : this.grid.center(b.i, b.j);
-      v.set(x, car ? 8 : y, z).project(camera);
+      v.set(x, car ? car.y + 8 : y, z).project(camera);
       b.pin.classList.toggle('riding', !!car);
       b.pin.style.left = ((v.x + 1) / 2) * innerWidth + 'px'; b.pin.style.top = ((1 - v.y) / 2) * innerHeight + 'px';
       return Math.abs(v.x) < 1.1 && Math.abs(v.y) < 1.1;
@@ -785,7 +789,7 @@ export class City {
       h.pin.classList.toggle('stuck', blocked);
     }
     for (const l of this.lines) for (const r of l.runs) {   // each bus shows its line color and how many people are riding
-      v.set(r.car.x, 9, r.car.z).project(camera);
+      v.set(r.car.x, r.car.y + 9, r.car.z).project(camera);
       r.pin.style.left = ((v.x + 1) / 2) * innerWidth + 'px'; r.pin.style.top = ((1 - v.y) / 2) * innerHeight + 'px';
       r.pin.textContent = String(r.riders.length);
     }
@@ -812,7 +816,7 @@ export class City {
     for (let c = 0; c < g.road.length; c++) if (g.road[c]) roads.push(c);
     return {
       v: 1, clock: this.clock, nextGrow: this.nextGrow, nextShop: this.nextShop, shopsDealt: this.shopsDealt,
-      stats: { ...this.stats }, hand: [...this.hand], roads, potholes: roads.filter((c) => g.pothole[c]), water: [...g.water.keys()].filter((c) => g.water[c]), avenues: roads.filter((c) => g.road[c] === 2), goal: this.goal, week: this.week, tokens: this.tokens, patience: this.patience, lines: this.lines.map((l) => ({ color: l.color, stops: l.stops })),
+      stats: { ...this.stats }, hand: [...this.hand], roads, highways: [...g.hwy.keys()].filter((c) => g.hwy[c]), potholes: roads.filter((c) => g.pothole[c]), water: [...g.water.keys()].filter((c) => g.water[c]), avenues: roads.filter((c) => g.road[c] === 2), goal: this.goal, week: this.week, tokens: this.tokens, patience: this.patience, lines: this.lines.map((l) => ({ color: l.color, stops: l.stops })),
       junctions: roads.filter((c) => g.junction[c]).map((c) => [c, g.junction[c], g.jspent[c]] as [number, number, number]),
       buildings: [...this.homes, ...this.shops].map((b) => ({ kind: b.kind, i: b.i, j: b.j, face: b.face, turned: b.turned, wants: b.kind === 'home' ? b.wants : undefined, level: b.kind === 'home' ? b.level : undefined, happy: b.kind === 'home' ? b.happy : undefined, type: b.kind === 'shop' ? b.type : undefined, stock: b.kind === 'shop' ? b.stock : undefined })),
     };
@@ -822,6 +826,7 @@ export class City {
     const g = this.grid;
     if (d.water) { g.water.fill(0); for (const c of d.water) { g.water[c] = 1; this.clearTree(c); } }
     for (const c of d.roads) { g.road[c] = 1; this.clearTree(c); }
+    for (const c of d.highways ?? []) { g.hwy[c] = 1; this.clearTree(c); }
     for (const c of d.avenues ?? []) g.road[c] = 2;
     for (const ld of d.lines ?? []) { const l = this.newLine(ld.color); l.stops = ld.stops; }
     for (const c of d.potholes ?? []) { g.pothole[c] = 1; this.holes.set(c, { crew: null, fixAt: -1, site: null }); }
@@ -847,7 +852,7 @@ export class City {
 export interface SaveData {
   v: 1;
   clock: number; nextGrow: number; nextShop: number; shopsDealt: number;
-  stats: Stats; hand: Piece[]; roads: number[]; avenues?: number[]; water?: number[]; potholes?: number[];
+  stats: Stats; hand: Piece[]; roads: number[]; highways?: number[]; avenues?: number[]; water?: number[]; potholes?: number[];
   junctions?: [number, number, number?][];
   lines?: { color: string; stops: number[] }[];
   goal?: Goal; week?: { arrived: number; failed: number; crashes: number }; tokens?: { lights: number; round: number }; patience?: number;
