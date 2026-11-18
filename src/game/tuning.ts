@@ -81,6 +81,14 @@ export const T = {
   potholeSpeed: 4,
   fixTime: 30,
 
+  /** Buses: a trip rides when its home and its shop each have a stop on the same line within busWalk tiles.
+      busShare of those trips take the bus. A stop costs stopCost road tiles. */
+  busWalk: 3,
+  busShare: 0.85,
+  busCapacity: 30,
+  stopCost: 1,
+  busStopTime: 0.9,
+
   /** Bridge pieces to start with (a crossing of the 2-wide river takes 2). More come from Sunday picks. */
   startBridges: 4,
 

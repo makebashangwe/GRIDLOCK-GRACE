@@ -10,7 +10,7 @@ import * as M from '../assets/models';
 import { shadowAll } from '../assets/core';
 import { Grid, DX, DZ, type Placed } from './grid';
 import { T, SHOP_INFO, SHOP_ORDER, type ShopType } from './tuning';
-import { findRoute, lanePath } from './routes';
+import { findRoute, lanePath, type Pt } from './routes';
 import { Traffic, type Car } from './traffic';
 
 const HOUSE_COLORS: [string, string][] = [['#F6E7CF', '#E07A5F'], ['#F3E3CB', '#81B29A'], ['#F6E7CF', '#D99A8B'], ['#F1DFC4', '#6D597A'], ['#F6E7CF', '#F2CC8F'], ['#F3E3CB', '#C8553D']];
@@ -21,6 +21,21 @@ const tryDispatchNow = (t: number) => t <= 0;
 const stocked = (t: ShopType) => t !== 'tow' && t !== 'depot';
 /** Service buildings: no customers, no home demand. */
 const service = (t: ShopType) => t === 'tow' || t === 'depot';
+/** A bus stop: post with a round sign in the line's color and the stop number, a little bench and shelter. Faces +Z. */
+function makeBusStop(color: string, n: number): THREE.Object3D {
+  const g = new THREE.Group();
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.25, 1.6), new THREE.MeshStandardMaterial({ color, roughness: 0.7 })); roof.position.set(0, 2.7, 0); g.add(roof);
+  for (const x of [-1.5, 1.5]) { const p = new THREE.Mesh(new THREE.BoxGeometry(0.16, 2.6, 0.16), new THREE.MeshStandardMaterial({ color: '#3F3A4A' })); p.position.set(x, 1.3, -0.6); g.add(p); }
+  const back = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.6, 0.08), new THREE.MeshStandardMaterial({ color: '#A9CFDA', transparent: true, opacity: 0.6 })); back.position.set(0, 1.5, -0.65); g.add(back);
+  const bench = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.18, 0.6), new THREE.MeshStandardMaterial({ color: '#B98B5E' })); bench.position.set(0, 0.6, -0.25); g.add(bench);
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128; const x = cv.getContext('2d')!;
+  x.fillStyle = color; x.beginPath(); x.arc(64, 64, 60, 0, Math.PI * 2); x.fill(); x.fillStyle = '#FFFBF4'; x.font = 'bold 72px Arial'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(String(n), 64, 70);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  const sign = new THREE.Mesh(new THREE.CircleGeometry(0.7, 24), new THREE.MeshStandardMaterial({ map: tex, side: THREE.DoubleSide })); sign.position.set(1.9, 3.3, 0); g.add(sign);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.3, 6), new THREE.MeshStandardMaterial({ color: '#3F3A4A' })); pole.position.set(1.9, 1.65, -0.05); g.add(pole);
+  return shadowAll(g);
+}
+
 /** Walls for apartment levels, so a grown street keeps some variety. */
 const APT_WALLS = ['#F6E7CF', '#D99A8B', '#F2CC8F', '#A9CFDA', '#E9D8B8', '#81B29A'];
 /** The model for a home at each level, scaled to fit inside one 14 m tile. Fronts face +Z. */
@@ -43,7 +58,7 @@ function homeModel(level: number, wall: string, roof: string): THREE.Object3D {
 /** The trip a home's pin shows: the one with the least time left. */
 function pinTrip(h: Home): Trip | null {
   let best: Trip | null = null;
-  for (const t of h.trips) if ((t.state === 'waiting' || t.state === 'out') && (!best || t.deadline < best.deadline)) best = t;
+  for (const t of h.trips) if (active(t) && (!best || t.deadline < best.deadline)) best = t;
   return best;
 }
 const FACE_ROT = [Math.PI / 2, 0, -Math.PI / 2, Math.PI];
@@ -73,7 +88,24 @@ export const LEVEL_NAMES = ['Cottage', 'Duplex', 'Garden Walkup', 'Heritage Corn
 export type Piece = { kind: 'home'; wants: ShopType } | { kind: 'shop'; type: ShopType };
 export interface Shop extends Building { kind: 'shop'; type: ShopType; served: number; stock: number; truck: Car | null; warned: boolean }
 type AnyBuilding = Home | Shop;
-interface Trip { home: Home; type: ShopType; deadline: number; state: 'waiting' | 'out' | 'shop' | 'back'; failed: boolean; shop?: Shop; car?: Car | null; until?: number }
+/** A trip: 'waiting' to leave by car, 'out' driving, 'stop' waiting for the bus, 'ride' on the bus, 'shop' inside, 'back' driving home. */
+interface Trip { home: Home; type: ShopType; deadline: number; state: 'waiting' | 'out' | 'stop' | 'ride' | 'shop' | 'back'; failed: boolean; shop?: Shop; car?: Car | null; until?: number; bus?: { line: BusLine; from: number; to: number; run?: BusRun } }
+
+export const LINE_COLORS = ['#4E8FA6', '#E07A5F', '#81B29A', '#6D597A', '#F4B860', '#D99A8B'];
+export interface BusLine {
+  color: string;
+  /** Stop tiles (road cells), in the order the bus visits them; it loops back to the first. */
+  stops: number[];
+  /** Buses running on this line (more on a longer loop, so nobody waits a whole lap). */
+  runs: BusRun[];
+  /** Distance along one lap where a bus reaches each stop; null when the stops aren't all connected. */
+  stopS: number[] | null;
+  pts: Pt[] | null;
+  lap: number;
+  signs: THREE.Object3D[];
+}
+export interface BusRun { car: Car; visited: Set<number>; riders: Trip[]; dwell: number; pin: HTMLDivElement }
+const active = (t: Trip) => t.state === 'waiting' || t.state === 'out' || t.state === 'stop' || t.state === 'ride';
 
 export type GoalId = 'trips' | 'late' | 'nocrash' | 'hand';
 export interface Goal { id: GoalId; target: number }
@@ -241,6 +273,7 @@ export class City {
   /** Call after any road change. */
   roadsChanged(): void {
     for (const b of [...this.homes, ...this.shops]) this.connect(b);
+    for (const l of this.lines) this.rebuildLine(l);
     // cars whose route now runs over a removed road: send them back to try again
     for (const car of [...this.traffic.cars]) {
       const trip = this.carTrip.get(car); if (!trip) continue;
@@ -322,6 +355,8 @@ export class City {
     }
     if (!best) return;
     const shop = best;
+    const ride = Math.random() < T.busShare ? this.busFor(home, shop) : null;
+    if (ride) { trip.state = 'stop'; trip.shop = shop; trip.bus = ride; return; }
     if (this.send(trip, home, shop, () => this.arriveShop(trip))) { trip.state = 'out'; trip.shop = shop; }
   }
 
@@ -405,6 +440,114 @@ export class City {
     if (u === 'patience') this.patience += 15;
     if (u === 'bridges') this.stats.bridges += 2;
     if (u === 'shop') { const type = SHOP_ORDER[this.shopsDealt++ % SHOP_ORDER.length]; this.hand.unshift({ kind: 'shop', type }); this.onChange(); }
+  }
+
+  /* ---------------- buses ---------------- */
+  lines: BusLine[] = [];
+  /** The line the Bus tool adds stops to. */
+  current = 0;
+
+  private newLine(color = LINE_COLORS[this.lines.length % LINE_COLORS.length]): BusLine {
+    const l: BusLine = { color, stops: [], runs: [], stopS: null, pts: null, lap: 0, signs: [] };
+    this.lines.push(l); return l;
+  }
+  startLine(): number {
+    const last = this.lines[this.lines.length - 1];
+    if (last && last.stops.length === 0) { this.current = this.lines.length - 1; return this.current; }
+    if (this.lines.length >= LINE_COLORS.length) return -1;
+    this.newLine(); this.current = this.lines.length - 1; return this.current;
+  }
+  stopAt(c: number): BusLine | null { return this.lines.find((l) => l.stops.includes(c)) ?? null; }
+
+  /** Bus tool click on a road tile: add a stop to the current line, or remove that line's stop. Returns road tiles spent (+) or refunded (-), or null if nothing happened. */
+  toggleStop(c: number): number | null {
+    const g = this.grid;
+    if (!g.road[c] || g.water[c]) return null;
+    if (!this.lines.length) this.newLine();
+    const line = this.lines[this.current] ?? this.lines[0], other = this.stopAt(c);
+    if (other && other !== line) return null;
+    if (other) { line.stops.splice(line.stops.indexOf(c), 1); this.rebuildLine(line); return -T.stopCost; }
+    line.stops.push(c); this.rebuildLine(line); return T.stopCost;
+  }
+
+  /** Recompute a line's loop and its stop signs after a change. */
+  rebuildLine(l: BusLine): void {
+    const g = this.grid;
+    l.stops = l.stops.filter((c) => g.road[c] && !g.water[c]);
+    for (const s of l.signs) this.scene.remove(s);
+    l.signs = l.stops.map((c, k) => { const s = makeBusStop(l.color, k + 1); const [i, j] = g.ij(c), { x, z } = g.center(i, j); s.position.set(x + 5.6, 0, z + 5.6); this.scene.add(s); return s; });
+    for (const r of l.runs) this.endRun(l, r, true);
+    l.stopS = null; l.pts = null;
+    if (l.stops.length < 2) return;
+    const cells: number[] = [l.stops[0]];
+    for (let k = 0; k < l.stops.length; k++) {
+      const r = findRoute(g, l.stops[k], l.stops[(k + 1) % l.stops.length]);
+      if (!r) return;
+      cells.push(...r.slice(1));
+    }
+    const pts = lanePath(g, cells);
+    // where along the lap the bus reaches each stop
+    const stopS: number[] = []; let sAt = 0, p = 0;
+    for (const stop of l.stops) {
+      while (p < pts.length - 1) {
+        const [i, j] = g.tileAt(pts[p].x, pts[p].z);
+        if (g.inside(i, j) && g.idx(i, j) === stop) break;
+        sAt += Math.hypot(pts[p + 1].x - pts[p].x, pts[p + 1].z - pts[p].z); p++;
+      }
+      stopS.push(sAt);
+    }
+    l.pts = pts; l.stopS = stopS;
+    l.lap = pts.slice(1).reduce((acc, q, k) => acc + Math.hypot(q.x - pts[k].x, q.z - pts[k].z), 0);
+  }
+
+  /** A bus finished its lap (or the line changed): riders still on board get off and are done. */
+  private endRun(l: BusLine, r: BusRun, removeCar = false): void {
+    if (removeCar) this.traffic.remove(r.car);
+    for (const t of r.riders) if (t.state === 'ride') this.finish(t);
+    r.pin.remove(); l.runs.splice(l.runs.indexOf(r), 1);
+  }
+
+  /** A line that serves both a home and a shop: stops within walking distance of each. */
+  private busFor(home: Home, shop: Shop): { line: BusLine; from: number; to: number } | null {
+    const g = this.grid, near = (b: AnyBuilding, c: number) => { const [i, j] = g.ij(c); return Math.abs(i - b.i) + Math.abs(j - b.j) <= T.busWalk; };
+    for (const l of this.lines) {
+      if (!l.stopS) continue;
+      const from = l.stops.findIndex((c) => near(home, c)), to = l.stops.findIndex((c) => near(shop, c));
+      if (from >= 0 && to >= 0 && from !== to) return { line: l, from, to };
+    }
+    return null;
+  }
+
+  private updateBuses(realDt: number): void {
+    for (const l of this.lines) {
+      if (!l.pts || !l.stopS) continue;
+      // keep buses spaced around the loop: about one per 90 m of route, up to 4
+      const want = Math.max(1, Math.min(4, Math.round(l.lap / 90)));
+      const last = l.runs[l.runs.length - 1];
+      if (l.runs.length < want && (!last || last.car.s > l.lap / want) && this.traffic.canStart(l.pts)) {
+        const obj = (M.makeSchoolBus as unknown as (p: string) => THREE.Object3D)(l.color); shadowAll(obj); obj.scale.setScalar(0.72);
+        const pin = document.createElement('div'); pin.className = 'pin bus'; pin.style.setProperty('--c', l.color); this.pinLayer.appendChild(pin);
+        const run: BusRun = { car: null as unknown as Car, visited: new Set(), riders: [], dwell: 0, pin };
+        const car = this.traffic.addSpecial(l.pts, obj, () => this.endRun(l, run), false);
+        if (car) { car.bus = true; run.car = car; l.runs.push(run); } else pin.remove();
+      }
+      for (const r of l.runs) {
+        const bus = r.car;
+        if (r.dwell > 0) { r.dwell -= realDt; bus.hold = r.dwell > 0; continue; }
+        for (let k = 0; k < l.stopS.length; k++) {
+          if (r.visited.has(k) || bus.s < l.stopS[k]) continue;
+          r.visited.add(k);
+          // riders for this stop get off and walk into their shop
+          for (const t of [...r.riders]) if (t.bus?.to === k) { r.riders.splice(r.riders.indexOf(t), 1); if (this.homes.includes(t.home)) this.arriveShop(t); }
+          // people waiting here get on
+          for (const h of this.homes) for (const t of h.trips) {
+            if (t.state !== 'stop' || t.bus?.line !== l || t.bus.from !== k || r.riders.length >= T.busCapacity) continue;
+            t.state = 'ride'; t.bus.run = r; r.riders.push(t);
+          }
+          r.dwell = T.busStopTime; bus.hold = true;
+        }
+      }
+    }
   }
 
   /* ---------------- deliveries ---------------- */
@@ -568,6 +711,7 @@ export class City {
     this.dispatchT -= realDt;
     this.updateCrashes(tryDispatchNow(this.dispatchT));
     if (tryDispatchNow(this.dispatchT)) { this.updateDeliveries(); this.updatePotholes(); }
+    this.updateBuses(realDt);
     const tryDispatch = this.dispatchT <= 0; if (tryDispatch) this.dispatchT = 0.4;
     for (const h of this.homes) {
       const size = T.households[h.level];
@@ -578,11 +722,12 @@ export class City {
       }
       for (const trip of [...h.trips]) {
         if (trip.state === 'waiting' && tryDispatch) this.dispatch(trip);
-        if (!trip.failed && (trip.state === 'waiting' || trip.state === 'out') && this.clock > trip.deadline) {
+        if (!trip.failed && active(trip) && this.clock > trip.deadline) {
           this.fail(trip);
-          if (trip.state === 'waiting') this.finish(trip);   // gave up
+          if (trip.state === 'waiting' || trip.state === 'stop') this.finish(trip);   // gave up
         }
         if (trip.state === 'shop' && this.clock >= trip.until!) {
+          if (trip.bus) { this.finish(trip); continue; }   // bus riders ride home too: no car
           trip.state = 'back';
           if (!trip.shop || !this.send(trip, trip.shop, h, () => this.finish(trip))) this.finish(trip);   // no way home: they get a ride
         }
@@ -612,7 +757,7 @@ export class City {
     const v = new THREE.Vector3();
     const put = (b: AnyBuilding, y: number) => {
       // a trip's timer rides on its car while it's driving, so you can follow it through traffic
-      const t = b.kind === 'home' ? pinTrip(b) : null, car = t?.state === 'out' ? t.car : null;
+      const t = b.kind === 'home' ? pinTrip(b) : null, car = t?.state === 'out' ? t.car : t?.state === 'ride' ? t.bus?.run?.car : null;
       const { x, z } = car ? { x: car.x, z: car.z } : this.grid.center(b.i, b.j);
       v.set(x, car ? 8 : y, z).project(camera);
       b.pin.classList.toggle('riding', !!car);
@@ -628,6 +773,11 @@ export class City {
       h.pin.style.setProperty('--p', String(t?.failed ? 1 : left));
       h.pin.classList.toggle('late', !!t?.failed);
       h.pin.classList.toggle('stuck', blocked);
+    }
+    for (const l of this.lines) for (const r of l.runs) {   // each bus shows its line color and how many people are riding
+      v.set(r.car.x, 9, r.car.z).project(camera);
+      r.pin.style.left = ((v.x + 1) / 2) * innerWidth + 'px'; r.pin.style.top = ((1 - v.y) / 2) * innerHeight + 'px';
+      r.pin.textContent = String(r.riders.length);
     }
     for (const cr of this.crashes) {
       const [i, j] = this.grid.ij(cr.tile), { x, z } = this.grid.center(i, j); v.set(x, 9, z).project(camera);
@@ -652,7 +802,7 @@ export class City {
     for (let c = 0; c < g.road.length; c++) if (g.road[c]) roads.push(c);
     return {
       v: 1, clock: this.clock, nextGrow: this.nextGrow, nextShop: this.nextShop, shopsDealt: this.shopsDealt,
-      stats: { ...this.stats }, hand: [...this.hand], roads, potholes: roads.filter((c) => g.pothole[c]), water: [...g.water.keys()].filter((c) => g.water[c]), avenues: roads.filter((c) => g.road[c] === 2), goal: this.goal, week: this.week, tokens: this.tokens, patience: this.patience,
+      stats: { ...this.stats }, hand: [...this.hand], roads, potholes: roads.filter((c) => g.pothole[c]), water: [...g.water.keys()].filter((c) => g.water[c]), avenues: roads.filter((c) => g.road[c] === 2), goal: this.goal, week: this.week, tokens: this.tokens, patience: this.patience, lines: this.lines.map((l) => ({ color: l.color, stops: l.stops })),
       junctions: roads.filter((c) => g.junction[c]).map((c) => [c, g.junction[c], g.jspent[c]] as [number, number, number]),
       buildings: [...this.homes, ...this.shops].map((b) => ({ kind: b.kind, i: b.i, j: b.j, face: b.face, turned: b.turned, wants: b.kind === 'home' ? b.wants : undefined, level: b.kind === 'home' ? b.level : undefined, happy: b.kind === 'home' ? b.happy : undefined, type: b.kind === 'shop' ? b.type : undefined, stock: b.kind === 'shop' ? b.stock : undefined })),
     };
@@ -663,6 +813,7 @@ export class City {
     if (d.water) { g.water.fill(0); for (const c of d.water) { g.water[c] = 1; this.clearTree(c); } }
     for (const c of d.roads) { g.road[c] = 1; this.clearTree(c); }
     for (const c of d.avenues ?? []) g.road[c] = 2;
+    for (const ld of d.lines ?? []) { const l = this.newLine(ld.color); l.stops = ld.stops; }
     for (const c of d.potholes ?? []) { g.pothole[c] = 1; this.holes.set(c, { crew: null, fixAt: -1, site: null }); }
     for (const [c, k, spent] of d.junctions ?? []) { g.junction[c] = k; g.jspent[c] = spent ?? 0; }
     if (d.goal) this.goal = d.goal; if (d.week) this.week = d.week; if (d.tokens) this.tokens = d.tokens; this.patience = d.patience ?? 0;
@@ -678,6 +829,7 @@ export class City {
     this.clock = d.clock; this.nextGrow = d.nextGrow; this.nextShop = d.nextShop; this.shopsDealt = d.shopsDealt;
     this.hand = d.hand; this.stats = { ...this.stats, ...d.stats, over: false };
     for (const h of this.homes) h.nextTrip = this.clock + Math.random() * 30;
+    for (const l of this.lines) this.rebuildLine(l);
     this.count(); this.onChange();
   }
 }
@@ -687,6 +839,7 @@ export interface SaveData {
   clock: number; nextGrow: number; nextShop: number; shopsDealt: number;
   stats: Stats; hand: Piece[]; roads: number[]; avenues?: number[]; water?: number[]; potholes?: number[];
   junctions?: [number, number, number?][];
+  lines?: { color: string; stops: number[] }[];
   goal?: Goal; week?: { arrived: number; failed: number; crashes: number }; tokens?: { lights: number; round: number }; patience?: number;
   buildings: { kind: 'home' | 'shop'; i: number; j: number; face: number; turned: boolean; wants?: ShopType; type?: ShopType; stock?: number; level?: number; happy?: number }[];
 }

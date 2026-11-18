@@ -35,6 +35,12 @@ export interface Car {
   /** Drives straight through traffic (the tow truck on a call). Delivery trucks queue like everyone else. */
   ghost?: boolean;
   jitter: number;
+  /** A city bus: runs at car speed. */
+  bus?: boolean;
+  /** Told to stay put this frame (a bus at its stop). */
+  hold?: boolean;
+  /** Seconds spent stopped while only giving way to crossing traffic (breaks two-way standoffs). */
+  stuck: number;
   /** The tile it was on last frame (for road wear). */
   tile: number;
 }
@@ -89,7 +95,7 @@ export class Traffic {
     const lens: number[] = [], cum: number[] = []; let total = 0;
     for (let k = 0; k < pts.length - 1; k++) { const l = Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].z - pts[k].z); lens.push(l); total += l; cum.push(total); }
     const id = this.nextId++;
-    const car: Car = { id, pts, lens, cum, total, s: 0, seg: 0, v: 0, x: pts[0].x, z: pts[0].z, hx: 1, hz: 0, paint: id % PAINTS.length, onArrive, stoppedFor: -1, wait: 0, crashed: false, jitter: 0, tile: -1 };
+    const car: Car = { id, pts, lens, cum, total, s: 0, seg: 0, v: 0, x: pts[0].x, z: pts[0].z, hx: 1, hz: 0, paint: id % PAINTS.length, onArrive, stoppedFor: -1, wait: 0, crashed: false, jitter: 0, tile: -1, stuck: 0 };
     this.place(car); this.cars.push(car); return car;
   }
 
@@ -159,7 +165,7 @@ export class Traffic {
     this.time += dt;
     for (const c of this.cars) {
       if (c.crashed) continue;
-      let blocked = false;
+      let blocked = false, yielding = false;
       for (const o of c.ghost ? [] : this.near(c.x, c.z)) {
         if (o === c || o.ghost) continue;
         const dx = o.x - c.x, dz = o.z - c.z, along = dx * c.hx + dz * c.hz;
@@ -169,13 +175,15 @@ export class Traffic {
         if (side > 1.9) continue;
         const same = o.hx * c.hx + o.hz * c.hz;
         if (same > 0.6) { blocked = true; break; }          // queue behind the car ahead
-        if (same > -0.6 && o.id < c.id) { blocked = true; break; }   // crossing traffic: lower number goes first
+        if (same > -0.6 && o.id < c.id && c.stuck < 2.5) { blocked = true; yielding = true; }   // crossing traffic: lower number goes first
       }
+      if (yielding) c.stuck += dt; else if (c.v > 2) c.stuck = 0;   // after 2.5 s of giving way, go anyway, until moving again
+      if (c.hold) { blocked = true; c.hold = false; }
       if (!blocked && !c.ghost && this.holdAtCrossing(c, clock, dt)) blocked = true;
       const [ti, tj] = g.tileAt(c.x, c.z), inRound = g.inside(ti, tj) && g.control(g.idx(ti, tj)) === J_ROUND;
       const onAvenue = g.inside(ti, tj) && g.isAvenue(g.idx(ti, tj));
       const onHole = g.inside(ti, tj) && g.pothole[g.idx(ti, tj)] === 1;
-      const top = onHole && !c.ghost ? T.potholeSpeed : c.special && !c.ghost ? T.truckSpeed : onAvenue && !c.special ? T.avenueSpeed : T.carSpeed;
+      const top = onHole && !c.ghost ? T.potholeSpeed : c.special && !c.ghost && !c.bus ? T.truckSpeed : onAvenue && !c.special ? T.avenueSpeed : T.carSpeed;
       const want = blocked ? 0 : inRound ? T.roundSpeed : top;
       c.v += Math.max(-T.carAccel * 2.5 * dt, Math.min(T.carAccel * dt, want - c.v));
       c.s += c.v * dt;

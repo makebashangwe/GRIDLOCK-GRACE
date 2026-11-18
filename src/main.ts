@@ -60,7 +60,7 @@ city.onHoles = () => roads.syncPotholes(scene);
 cam.target.set(0, 0, 0); cam.zoom = cam.goalZoom = 1.15;
 
 /* ---------- drawing roads ---------- */
-type Tool = 'road' | 'avenue' | 'place' | 'turn' | 'junction' | 'erase' | 'move' | 'rotate';
+type Tool = 'road' | 'avenue' | 'bus' | 'place' | 'turn' | 'junction' | 'erase' | 'move' | 'rotate';
 let tool: Tool = 'road';
 const ghostMat = new THREE.MeshBasicMaterial({ color: '#4E8FA6', transparent: true, opacity: 0.4, depthWrite: false });
 const ghost = new THREE.Mesh(new THREE.PlaneGeometry(T.tile - 0.6, T.tile - 0.6).rotateX(-Math.PI / 2), ghostMat);
@@ -120,6 +120,7 @@ function apply(i: number, j: number): boolean {
   if (tool === 'erase') {
     if (grid.building[c]) { city.remove(i, j); return true; }
     if (!grid.road[c]) return false;
+    if (city.stopAt(c)) city.stats.roadTiles += T.stopCost;   // a stop on this road comes back too
     if (grid.isEntry(c)) { toast('That road is a highway connection: delivery trucks come in there', 'bad'); return false; }
     if (grid.water[c]) city.stats.bridges++; else city.stats.roadTiles += grid.road[c];
     city.stats.roadTiles += grid.jspent[c]; grid.junction[c] = J_NONE; grid.wear[c] = 0; grid.jspent[c] = 0; grid.road[c] = 0;
@@ -151,6 +152,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (tool === 'place') { if (city.placeNext(...t)) { drawHand(); if (!city.hand.length) setTool('road'); } return; }
   if (tool === 'turn') { city.turn(...t); return; }
   if (tool === 'junction') { cycleJunction(...t); return; }
+  if (tool === 'bus') { busClick(...t); return; }
   canvas.setPointerCapture(e.pointerId); stroke = null; paintTo(t);
 });
 canvas.addEventListener('pointermove', (e) => {
@@ -167,11 +169,11 @@ canvas.addEventListener('pointermove', (e) => {
   const { x, z } = grid.center(...t); ghost.position.x = x; ghost.position.z = z;
   const c = grid.idx(...t);
   const ok = tool === 'road' ? canPlace(...t) : tool === 'avenue' ? (grid.road[c] === 1 && city.stats.roadTiles >= T.avenueCost - 1) || (grid.isFree(...t) && city.stats.roadTiles >= T.avenueCost) : tool === 'place' ? grid.isFree(...t) && city.hand.length > 0
-    : tool === 'turn' ? !!grid.building[c] : tool === 'junction' ? grid.isCrossing(c) : !!grid.building[c] || grid.isRoad(...t);
+    : tool === 'bus' ? !!grid.road[c] && !grid.water[c] : tool === 'turn' ? !!grid.building[c] : tool === 'junction' ? grid.isCrossing(c) : !!grid.building[c] || grid.isRoad(...t);
   ghostMat.color.set(tool === 'erase' ? '#C8553D' : ok ? (tool === 'place' ? pieceColor() : '#4E8FA6') : '#C8553D'); ghostMat.opacity = ok ? 0.42 : 0.22;
   const info = (tool === 'turn' || tool === 'erase' || tool === 'place') ? city.homeInfo(...t) : '';
   if (info && !(tool === 'place' && ok)) { hintAt(e, info); return; }
-  hintAt(e, tool === 'road' && ok && grid.water[c] ? `Bridge · uses 1 of your ${city.stats.bridges} bridge pieces · crosses east-west` : tool === 'avenue' && ok ? (grid.road[c] === 1 ? `Upgrade to avenue · ${T.avenueCost - 1} road tile` : `Avenue · ${T.avenueCost} road tiles`) : tool === 'place' && ok ? placeHint(...t) : tool === 'junction' && ok ? `Next: ${J_INFO[nextJunction(grid.junction[c])].name} · ${J_INFO[nextJunction(grid.junction[c])].note}` : '');
+  hintAt(e, tool === 'bus' && ok ? (city.stopAt(c) ? (city.stopAt(c) === city.lines[city.current] ? 'Remove this stop' : 'Stop on another line: click to switch to it') : `Add a stop · ${T.stopCost} road tile · homes and shops within ${T.busWalk} tiles can ride`) : tool === 'road' && ok && grid.water[c] ? `Bridge · uses 1 of your ${city.stats.bridges} bridge pieces · crosses east-west` : tool === 'avenue' && ok ? (grid.road[c] === 1 ? `Upgrade to avenue · ${T.avenueCost - 1} road tile` : `Avenue · ${T.avenueCost} road tiles`) : tool === 'place' && ok ? placeHint(...t) : tool === 'junction' && ok ? `Next: ${J_INFO[nextJunction(grid.junction[c])].name} · ${J_INFO[nextJunction(grid.junction[c])].note}` : '');
   if (stroke && (e.buttons & 1)) paintTo(t);
 });
 const endStroke = () => { stroke = null; toolDrag = null; };
@@ -179,8 +181,8 @@ canvas.addEventListener('pointerleave', () => hintAt(null, ''));
 canvas.addEventListener('pointerup', endStroke); canvas.addEventListener('pointercancel', endStroke);
 canvas.addEventListener('pointerleave', () => (ghost.visible = false));
 
-const TOOLS: [Tool, string][] = [['road', 'toolRoad'], ['avenue', 'toolAvenue'], ['place', 'toolPlace'], ['turn', 'toolTurn'], ['junction', 'toolJunction'], ['erase', 'toolErase'], ['move', 'toolMove'], ['rotate', 'toolRotate']];
-function setTool(t: Tool) { tool = t; for (const [k, id] of TOOLS) $(id).classList.toggle('on', k === t); if (t !== 'place') hintAt(null, ''); }
+const TOOLS: [Tool, string][] = [['road', 'toolRoad'], ['avenue', 'toolAvenue'], ['bus', 'toolBus'], ['place', 'toolPlace'], ['turn', 'toolTurn'], ['junction', 'toolJunction'], ['erase', 'toolErase'], ['move', 'toolMove'], ['rotate', 'toolRotate']];
+function setTool(t: Tool) { tool = t; $('busPanel').style.display = t === 'bus' ? 'flex' : 'none'; if (t === 'bus') drawLines(); for (const [k, id] of TOOLS) $(id).classList.toggle('on', k === t); if (t !== 'place') hintAt(null, ''); }
 for (const [k, id] of TOOLS) $(id).onclick = () => setTool(k);
 $('zoomIn').onclick = () => (cam.goalZoom = Math.min(9, cam.goalZoom * 1.35)); $('zoomOut').onclick = () => (cam.goalZoom = Math.max(0.15, cam.goalZoom / 1.35));
 
@@ -209,6 +211,28 @@ function drawHand() {
 city.onChange = drawHand;
 drawHand();
 
+/* ---------- bus lines ---------- */
+function busClick(i: number, j: number) {
+  const c = grid.idx(i, j);
+  if (!grid.road[c] || grid.water[c]) { toast('Bus stops go on road tiles', 'bad'); return; }
+  if (!city.stopAt(c) && city.stats.roadTiles < T.stopCost) { toast(`A stop costs ${T.stopCost} road tile`, 'bad'); return; }
+  const other = city.stopAt(c);
+  if (other && other !== city.lines[city.current]) { city.current = city.lines.indexOf(other); drawLines(); toast('Switched to that line: click its stops to remove them', 'good'); return; }
+  const spent = city.toggleStop(c); if (spent === null) return;
+  city.stats.roadTiles -= spent; drawLines();
+  const l = city.lines[city.current];
+  if (spent > 0 && l.stops.length === 1) toast('First stop placed. Add more: the bus loops through them in order', 'good');
+  else if (spent > 0 && l.stops.length >= 2 && !l.stopS) toast("Those stops aren't connected by road", 'bad');
+}
+function drawLines() {
+  const el = $('lines');
+  el.innerHTML = city.lines.map((l, k) => `<button data-line="${k}" class="${k === city.current ? 'on' : ''}"><i style="background:${l.color}"></i>${l.stops.length} stop${l.stops.length === 1 ? '' : 's'}${l.stops.length >= 2 && !l.stopS ? ' · broken' : ''}</button>`).join('')
+    + `<button id="newLine">+ New line</button>`;
+  el.querySelectorAll<HTMLButtonElement>('[data-line]').forEach((b) => (b.onclick = () => { city.current = Number(b.dataset.line); drawLines(); }));
+  $('newLine').onclick = () => { if (city.startLine() < 0) toast('Six lines is the most for now', 'bad'); drawLines(); };
+}
+drawLines();
+
 /* ---------- speed ---------- */
 let speed = 1;
 function setSpeed(s: number) { speed = s; document.querySelectorAll<HTMLElement>('[data-speed]').forEach((b) => b.classList.toggle('on', Number(b.dataset.speed) === s)); }
@@ -218,6 +242,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'p' || e.key === 'P') setTool('place');
   if (e.key === 't' || e.key === 'T') setTool('turn');
   if (e.key === 'v' || e.key === 'V') setTool('avenue');
+  if (e.key === 'b' || e.key === 'B') setTool('bus');
   if (e.key === 'j' || e.key === 'J') setTool('junction');
   if (e.key === 'x' || e.key === 'X') setTool('erase');
   if (e.key === 'm' || e.key === 'M') setTool('move');
@@ -308,4 +333,4 @@ function loop(now: number) {
 }
 requestAnimationFrame(loop);
 setTool('place'); setSpeed(1);
-(window as unknown as { __game: unknown }).__game = { city, grid, traffic, cam, roads, junction: (i: number, j: number) => cycleJunction(i, j), avenue: (i: number, j: number) => { const was = tool; tool = 'avenue'; apply(i, j); tool = was; roads.rebuild(); junctions.sync(); city.roadsChanged(); }, endWeek: () => { city.clock = (Math.floor(city.clock / 1440 / 7) + 1) * 7 * 1440 - 1; }, paint: (i: number, j: number) => { const was = tool; tool = 'road'; apply(i, j); tool = was; roads.rebuild(); junctions.sync(); city.roadsChanged(); } };
+(window as unknown as { __game: unknown }).__game = { city, grid, traffic, cam, roads, junction: (i: number, j: number) => cycleJunction(i, j), bus: (i: number, j: number) => busClick(i, j), avenue: (i: number, j: number) => { const was = tool; tool = 'avenue'; apply(i, j); tool = was; roads.rebuild(); junctions.sync(); city.roadsChanged(); }, endWeek: () => { city.clock = (Math.floor(city.clock / 1440 / 7) + 1) * 7 * 1440 - 1; }, paint: (i: number, j: number) => { const was = tool; tool = 'road'; apply(i, j); tool = was; roads.rebuild(); junctions.sync(); city.roadsChanged(); } };

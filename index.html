@@ -51,6 +51,14 @@
     .piece i.shop { border-radius: 5px; box-shadow: inset 0 5px 0 #FFFBF4, inset 0 7px 0 var(--c); }
     #hand .empty { font-size: 12px; opacity: .65; line-height: 1.45; }
     #hint { position: fixed; display: none; pointer-events: none; z-index: 5; background: #3F3A4A; color: #F6E7CF; font-weight: 800; font-size: 12.5px; padding: 5px 10px; border-radius: 999px; white-space: nowrap; }
+    #busPanel { left: 50%; bottom: 84px; transform: translateX(-50%); display: none; flex-direction: column; gap: 6px; width: 420px; max-width: 90vw; font-size: 12.5px; }
+    #busPanel .title { font-size: 11px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; opacity: .55; }
+    #busPanel .small { font-size: 12px; opacity: .7; line-height: 1.4; }
+    #lines { display: flex; flex-wrap: wrap; gap: 6px; }
+    #lines button { font-size: 12.5px; padding: 6px 10px; display: flex; align-items: center; gap: 6px; }
+    #lines i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+    .pin.bus { width: auto; height: auto; min-width: 16px; text-align: center; border-radius: 999px; background: var(--c); color: #FFFBF4; font-weight: 900; font-size: 11.5px; padding: 1px 7px; border: 2px solid #FFFBF4; }
+    .pin.bus::after { display: none; }
     .sep { width: 1px; background: #E6DACA; margin: 4px 2px; }
     button:disabled { opacity: .4; cursor: default; }
     #legend { right: 16px; bottom: 18px; font-size: 12.5px; font-weight: 800; display: flex; flex-direction: column; gap: 4px; }
@@ -124,6 +132,7 @@
     <button id="toolPlace" title="P">Place</button>
     <button id="toolRoad" title="R">Road</button>
     <button id="toolAvenue" title="V">Avenue</button>
+    <button id="toolBus" title="B">Bus</button>
     <button id="toolTurn" title="T">Turn</button>
     <button id="toolJunction" title="J">Crossing</button>
     <button id="toolErase" title="X">Erase</button>
@@ -133,12 +142,13 @@
     <button id="zoomOut" title="Zoom out">−</button><button id="zoomIn" title="Zoom in">+</button>
   </div>
   <div class="card" id="help">
-    <b>Build your town.</b> Place each home and shop from your hand, then connect them with roads. Doors must face a road (Turn rotates a building). Homes want a shop: put them close to it. On-time trips earn more road. Crossing sets a stop sign, light or roundabout where roads meet. Avenue builds or upgrades to 4 lanes. Shops need a road to a HIGHWAY sign at the map's edge so trucks can restock them. Erase picks a building back up.
+    <b>Build your town.</b> Place each home and shop from your hand, then connect them with roads. Doors must face a road (Turn rotates a building). Homes want a shop: put them close to it. On-time trips earn more road. Crossing sets a stop sign, light or roundabout where roads meet. Avenue builds or upgrades to 4 lanes. Bus draws a bus line from stop to stop. Shops need a road to a HIGHWAY sign at the map's edge so trucks can restock them. Erase picks a building back up.
     Right-drag or Option-drag to orbit · Shift-drag or arrow keys to pan · scroll to zoom · Q/E snap 90° · <a href="./gallery.html">asset gallery</a>
   </div>
   <div class="card" id="legend"></div>
   <div class="card" id="hand"><div class="title">Your hand</div><div id="handList"></div></div>
   <div id="hint"></div>
+  <div class="card" id="busPanel"><div class="title">Bus lines</div><div id="lines"></div><div class="small">Click road tiles to add stops; the bus loops through them in order. People ride when there's a stop near their home and one near their shop.</div></div>
   <div id="week"><div class="card"><h2 id="weekTitle">Week done</h2><p id="weekGoal"></p><div id="weekOptions"></div></div></div>
   <div id="over"><div class="card"><h2>Gridlock!</h2><p id="overStats"></p><p class="small">Love this town? Keep building it in Sandbox, with no fail limit.</p><div class="row"><button id="keep">Keep building</button><button id="again" class="ghost">Start over</button></div></div></div>
   <script type="module" src="/src/main.ts"></script>
