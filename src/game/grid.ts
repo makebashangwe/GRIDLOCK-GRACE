@@ -27,8 +27,12 @@ export class Grid {
   readonly junction: Uint8Array;
   /** River tiles. A road on water is a bridge, and bridges only run east-west (across the river). */
   readonly water: Uint8Array;
-  /** The highway connection on the west edge: a road tile that can't be erased. Delivery trucks come in here. */
+  /** Highway connections, one in the middle of each edge (moved off the river if needed): road tiles that can't be
+      erased. Delivery trucks come in at the nearest one. entry is the west one. */
   readonly entry: number;
+  readonly entries: number[];
+  /** Which edge each entry is on (0 east, 1 south, 2 west, 3 north): the highway runs off the map that way. */
+  readonly entryDir: number[];
   /** Wear from traffic per tile, and potholes (1 = pothole). */
   readonly wear: Float32Array;
   readonly pothole: Uint8Array;
@@ -44,6 +48,7 @@ export class Grid {
     this.junction = new Uint8Array(size);
     this.water = new Uint8Array(size);
     this.entry = this.idx(0, Math.floor(this.n / 2));
+    this.entries = [this.entry]; this.entryDir = [2];
     this.wear = new Float32Array(size);
     this.pothole = new Uint8Array(size);
     this.jspent = new Uint8Array(size);
@@ -73,6 +78,18 @@ export class Grid {
   tileAt(x: number, z: number): [number, number] {
     return [Math.floor(x / T.tile + this.n / 2), Math.floor(z / T.tile + this.n / 2)];
   }
+  /** Set up the four highway connections (call after the river exists). */
+  placeEntries(): void {
+    const n = this.n, m = Math.floor(n / 2), list: [number, number][] = [[0, m], [n - 1, m], [m - 6, 0], [m - 6, n - 1]], dirs = [2, 0, 3, 1];
+    this.entries.length = 0; this.entryDir.length = 0;
+    list.forEach(([i, j], k) => {
+      let a = i;   // slide a north/south entry sideways off the water
+      while (this.water[this.idx(a, j)] && a > 1) a--;
+      this.entries.push(this.idx(a, j)); this.entryDir.push(dirs[k]);
+    });
+  }
+  isEntry(c: number): boolean { return this.entries.includes(c); }
+
   /** Is this a crossing (a road tile where 3 or 4 roads meet)? */
   isCrossing(c: number): boolean {
     if (!this.road[c]) return false;

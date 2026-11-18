@@ -9,7 +9,7 @@ import { TerrainView, makeRiver } from './game/terrain';
 import { makeOnRampEntranceSign } from './assets/models';
 import { shadowAll } from './assets/core';
 import { JunctionView } from './game/junctions';
-import { J_NONE, J_STOP, J_LIGHT, J_ROUND } from './game/grid';
+import { J_NONE, J_STOP, J_LIGHT, J_ROUND, DX, DZ } from './game/grid';
 import { Traffic } from './game/traffic';
 import { City, UPGRADES, type SaveData, type WeekEnd } from './game/city';
 import { T, SHOP_INFO, SHOP_ORDER } from './game/tuning';
@@ -35,17 +35,21 @@ let loaded = false;
 try { const raw = localStorage.getItem(SAVE_KEY); if (raw) { city.load(JSON.parse(raw) as SaveData); loaded = true; } } catch { /* a broken save just means a fresh town */ }
 if (!loaded) { makeRiver(grid); for (let c = 0; c < grid.water.length; c++) if (grid.water[c]) city.clearTree(c); }
 const terrain = new TerrainView(scene, grid); terrain.rebuild();
-// the highway connection on the west edge: always a road, can't be erased
-if (!grid.building[grid.entry]) { grid.road[grid.entry] = Math.max(1, grid.road[grid.entry]); city.clearTree(grid.entry); }
-{
-  const [ei, ej] = grid.ij(grid.entry), { x, z } = grid.center(ei, ej);
-  const stub = new THREE.Mesh(new THREE.BoxGeometry(60, 2.6, T.tile), new THREE.MeshStandardMaterial({ color: '#B9A58F', roughness: 0.95 }));
-  stub.position.set(x - T.tile / 2 - 30, -1.27, z); scene.add(stub);
-  const deck = new THREE.Mesh(new THREE.PlaneGeometry(60, 9.6).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#5E5A6B', roughness: 0.9 }));
-  deck.position.set(x - T.tile / 2 - 30, 0.04, z); deck.receiveShadow = true; scene.add(deck);
+// highway connections, one on each edge: always road, can't be erased. Delivery trucks come in at the nearest.
+grid.placeEntries();
+grid.entries.forEach((e, k) => {
+  if (grid.building[e]) return;   // an old town with a building on that spot: skip this one
+  grid.road[e] = Math.max(1, grid.road[e]); city.clearTree(e);
+  const d = grid.entryDir[k], [ei, ej] = grid.ij(e), { x, z } = grid.center(ei, ej);
+  const ox = DX[d], oz = DZ[d], along = ox !== 0;
+  const mid = { x: x + ox * (T.tile / 2 + 30), z: z + oz * (T.tile / 2 + 30) };
+  const stub = new THREE.Mesh(new THREE.BoxGeometry(along ? 60 : T.tile, 2.6, along ? T.tile : 60), new THREE.MeshStandardMaterial({ color: '#B9A58F', roughness: 0.95 }));
+  stub.position.set(mid.x, -1.27, mid.z); scene.add(stub);
+  const deck = new THREE.Mesh(new THREE.PlaneGeometry(along ? 60 : 9.6, along ? 9.6 : 60).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#5E5A6B', roughness: 0.9 }));
+  deck.position.set(mid.x, 0.04, mid.z); deck.receiveShadow = true; scene.add(deck);
   const sign = makeOnRampEntranceSign('HIGHWAY') as THREE.Object3D; shadowAll(sign); sign.scale.setScalar(1.3);
-  sign.position.set(x - 2, 0, z - T.tile / 2 - 1); sign.rotation.y = -Math.PI / 2; scene.add(sign);
-}
+  sign.position.set(x + ox * 2 - oz * (T.tile / 2 + 1), 0, z + oz * 2 + ox * (T.tile / 2 + 1)); sign.rotation.y = Math.atan2(ox, oz); scene.add(sign);
+});
 const saveNow = () => { try { if (!city.stats.over) localStorage.setItem(SAVE_KEY, JSON.stringify(city.save())); } catch { /* storage full or blocked */ } };
 setInterval(saveNow, 5000);
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
@@ -116,7 +120,7 @@ function apply(i: number, j: number): boolean {
   if (tool === 'erase') {
     if (grid.building[c]) { city.remove(i, j); return true; }
     if (!grid.road[c]) return false;
-    if (c === grid.entry) { toast('That road is the highway connection: delivery trucks come in there', 'bad'); return false; }
+    if (grid.isEntry(c)) { toast('That road is a highway connection: delivery trucks come in there', 'bad'); return false; }
     if (grid.water[c]) city.stats.bridges++; else city.stats.roadTiles += grid.road[c];
     city.stats.roadTiles += grid.jspent[c]; grid.junction[c] = J_NONE; grid.wear[c] = 0; grid.jspent[c] = 0; grid.road[c] = 0;
     return true;
@@ -229,6 +233,8 @@ function toast(text: string, tone: 'good' | 'bad' = 'good') {
   setTimeout(() => el.classList.add('out'), 3200); setTimeout(() => el.remove(), 3800);
 }
 city.onEvent = (text, tone) => { toast(text, tone); if (city.stats.over) gameOver(); };
+// late trips are summed up every 6 seconds instead of one message each
+setInterval(() => { const t = city.lateSummary(); if (t) toast(t, 'bad'); }, 6000);
 // on-time trips earn road: the tile counter pops, and the first time you run dry we explain how to get more
 city.onEarn = () => { const el = $('tiles'); el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); };
 let toldEmpty = false;

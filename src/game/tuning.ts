@@ -71,8 +71,8 @@ export const T = {
   /** Shop stock: each customer uses some; below restockAt a delivery truck comes from the highway.
       An empty shop turns customers away (their trip counts as late). */
   stockMax: 100,
-  stockPerTrip: 6,
-  restockAt: 40,
+  stockPerTrip: 4,
+  restockAt: 60,
   truckSpeed: 9,
 
   /** Road wear: a tile cracks into a pothole after this many car passes (trucks count 3). Cars crawl over

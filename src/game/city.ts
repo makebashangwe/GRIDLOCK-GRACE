@@ -312,11 +312,13 @@ export class City {
   private dispatch(trip: Trip): void {
     const home = trip.home;
     if (home.access < 0) return;
+    // the closest shop of the right kind, but drivers avoid one that's sold out or nearly (a truck may be coming)
     let best: Shop | null = null, bestLen = Infinity;
     for (const s of this.shops) {
       if (s.type !== trip.type || s.access < 0) continue;
-      const r = findRoute(this.grid, home.access, s.access);
-      if (r && r.length < bestLen) { best = s; bestLen = r.length; }
+      const r = findRoute(this.grid, home.access, s.access); if (!r) continue;
+      const score = r.length + (s.stock <= 0 ? 60 : s.stock < T.stockPerTrip * 3 ? 12 : 0);
+      if (score < bestLen) { best = s; bestLen = score; }
     }
     if (!best) return;
     const shop = best;
@@ -328,7 +330,7 @@ export class City {
     trip.car = null; trip.state = 'shop'; trip.until = this.clock + T.shopVisit;
     const shop = trip.shop;
     if (shop && shop.stock <= 0) {   // sold out: the customer is turned away
-      if (!trip.failed) this.fail(trip, `${SHOP_INFO[shop.type].name} is sold out`);
+      if (!trip.failed) this.fail(trip, 'soldout');
       return;
     }
     if (shop) shop.stock = Math.max(0, shop.stock - T.stockPerTrip);
@@ -344,9 +346,24 @@ export class City {
     h.nextTrip = Math.max(h.nextTrip, this.clock + T.tripCooldown / T.households[h.level]);
   }
 
-  private fail(trip: Trip, why?: string): void {
+  /** Late trips since the last summary, by cause, so a busy minute is one message instead of twenty. */
+  private lateLog = { late: 0, soldOut: new Map<string, number>(), crash: 0 };
+  /** One summary of what ran late lately (or '' if nothing did). The game calls this every few seconds. */
+  lateSummary(): string {
+    const L = this.lateLog, parts: string[] = [];
+    if (L.late) parts.push(`${L.late} ran out of time in traffic`);
+    for (const [name, n] of L.soldOut) parts.push(`${n} found ${name} sold out`);
+    if (L.crash) parts.push(`${L.crash} were in crashes`);
+    const total = L.late + L.crash + [...L.soldOut.values()].reduce((a, b) => a + b, 0);
+    this.lateLog = { late: 0, soldOut: new Map(), crash: 0 };
+    if (!total) return '';
+    return `${total} late trip${total > 1 ? 's' : ''}: ` + parts.join(', ');
+  }
+
+  private fail(trip: Trip, why?: 'soldout' | 'crash'): void {
     trip.failed = true; this.stats.failed++; this.week.failed++; trip.home.happy = Math.max(0, trip.home.happy - 2);
-    this.onEvent(why ?? `A trip to ${SHOP_INFO[trip.type].name} missed its deadline`, 'bad');
+    if (why === 'soldout' && trip.shop) { const n = SHOP_INFO[trip.shop.type].name; this.lateLog.soldOut.set(n, (this.lateLog.soldOut.get(n) ?? 0) + 1); }
+    else if (why === 'crash') this.lateLog.crash++; else this.lateLog.late++;
     if (!this.stats.sandbox && this.stats.failed >= T.failLimit) { this.stats.over = true; this.onEvent('Gridlock! The city ran out of patience.', 'bad'); }
   }
 
@@ -394,12 +411,16 @@ export class City {
   /** Send a delivery truck from the highway to any shop running low. */
   private updateDeliveries(): void {
     const g = this.grid;
-    if (!g.road[g.entry]) return;
     for (const shop of this.shops) {
       if (!stocked(shop.type) || shop.truck || shop.stock >= T.restockAt) continue;
-      const route = shop.access >= 0 ? findRoute(g, g.entry, shop.access) : null;
+      // trucks come in at the nearest highway connection the shop can be reached from
+      let route: number[] | null = null, from = -1;
+      if (shop.access >= 0) for (const e of g.entries) {
+        if (!g.road[e]) continue;
+        const r = findRoute(g, e, shop.access); if (r && (!route || r.length < route.length)) { route = r; from = e; }
+      }
       if (!route) {
-        if (!shop.warned) { shop.warned = true; this.onEvent(`${SHOP_INFO[shop.type].name} is running low: connect it to the highway on the west edge so trucks can restock it`, 'bad'); }
+        if (!shop.warned) { shop.warned = true; this.onEvent(`${SHOP_INFO[shop.type].name} is running low: connect it to a HIGHWAY sign at the map's edge so trucks can restock it`, 'bad'); }
         continue;
       }
       const pts = lanePath(g, [...route, g.idx(shop.i, shop.j)]);
@@ -407,7 +428,7 @@ export class City {
       const truck = M.makeDeliveryTruck(SHOP_INFO[shop.type].color) as THREE.Object3D; shadowAll(truck); truck.scale.setScalar(0.85);
       shop.truck = this.traffic.addSpecial(pts, truck, () => {
         shop.stock = T.stockMax; shop.truck = null; shop.warned = false;
-        const back = shop.access >= 0 && g.road[g.entry] ? findRoute(g, shop.access, g.entry) : null;
+        const back = shop.access >= 0 && g.road[from] ? findRoute(g, shop.access, from) : null;
         if (back) {
           const t2 = M.makeDeliveryTruck(SHOP_INFO[shop.type].color) as THREE.Object3D; shadowAll(t2); t2.scale.setScalar(0.85);
           this.traffic.addSpecial(lanePath(g, [g.idx(shop.i, shop.j), ...back]), t2, () => {}, false);
@@ -469,7 +490,7 @@ export class City {
   /* ---------------- crashes and towing ---------------- */
   private crash(a: Car, b: Car, tile: number): void {
     this.stats.crashes++; this.week.crashes++;
-    for (const car of [a, b]) { const trip = this.carTrip.get(car); if (trip && !trip.failed) this.fail(trip); }
+    for (const car of [a, b]) { const trip = this.carTrip.get(car); if (trip && !trip.failed) this.fail(trip, 'crash'); }
     const pin = document.createElement('div'); pin.className = 'pin crash'; pin.innerHTML = '<b>!</b>Crash'; this.pinLayer.appendChild(pin);
     this.crashes.push({ tile, cars: [a, b], since: this.clock, tow: null, pin });
     const hasTow = this.shops.some((s) => s.type === 'tow') || this.hand.some((p) => p.kind === 'shop' && p.type === 'tow');

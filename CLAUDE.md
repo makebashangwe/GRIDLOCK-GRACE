@@ -21,7 +21,7 @@ Gridlock & Grace: cozy isometric city-builder. Traffic puzzle first (v0.1), then
 
 ## Map rules
 - Use `grid.connects(i, j, d)` for any road-to-road check: it applies the water rule (bridges only connect east-west).
-- `grid.entry` (west edge, middle) is the highway connection: always road, can't be erased; delivery trucks enter there.
+- `grid.entries` are the highway connections, one per edge (`grid.placeEntries()`, moved off the river): always road, can't be erased; delivery trucks enter at the nearest. `grid.entry` is the west one.
 
 ## Still to port from the Asset Test
 - Meshy GLB fixes: zero-length normal repair, texture recolor (police station navy to teal, house roof variants), texture shrinking.
